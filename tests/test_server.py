@@ -40,6 +40,7 @@ TOOLS = {
     "get_image_model",
     "generate_image",
     "edit_image",
+    "remask_image",
 }
 TABLE_HEADER = (
     "| id | name | inputs | aspect ratios | resolutions | quality | max n | seed | moderated | price |"
@@ -184,6 +185,7 @@ async def test_build_server_returns_named_mcpserver(server):
 async def test_tool_names(session):
     tools = (await session.list_tools()).tools
     assert {t.name for t in tools} == TOOLS
+    assert len(tools) == 8
 
 
 async def test_tool_parameters_match_spec(session):
@@ -202,6 +204,8 @@ async def test_tool_parameters_match_spec(session):
     assert props["edit_image"] == shared | {"images", "mask_path", "mask_feather_px", "fit"}
     assert set(tools["edit_image"].input_schema["required"]) == {"prompt", "model", "images"}
     assert set(tools["generate_image"].input_schema["required"]) == {"prompt", "model"}
+    assert props["remask_image"] == {"image", "mask_path", "mask_feather_px", "output_dir"}
+    assert set(tools["remask_image"].input_schema["required"]) == {"image", "mask_path"}
 
 
 async def test_image_tool_docstrings_guide_the_caller(session):
@@ -216,6 +220,13 @@ async def test_image_tool_docstrings_guide_the_caller(session):
     assert "seam" in edit
     assert "absolute" in edit
     assert "cost" in edit.lower()
+    assert ".unmasked.png" in edit and "remask_image" in edit
+    remask_doc = tools["remask_image"].description
+    assert "seam" in remask_doc and "ghost" in remask_doc
+    assert "free" in remask_doc and "offline" in remask_doc
+    assert "edit_image" in remask_doc and "mask_path" in remask_doc
+    assert "0.2.0" in remask_doc
+    assert "absolute" in remask_doc
 
 
 # ------------------------------------------------------------------ image tools
@@ -324,6 +335,74 @@ async def test_progress_guard_keeps_values_strictly_increasing():
     assert all(b > a for a, b in pairwise(values)), values
     assert values[0] == 0.5 and values[-1] == 1.0
     assert all(t == 2 for _, t, _ in sent)
+
+
+def _halves_mask(path, w=1920, h=828, left=True):
+    mask = Image.new("L", (w, h), 0)
+    mask.paste(255, (0, 0, w // 2, h) if left else (w // 2, 0, w, h))
+    return save(mask, path, "PNG")
+
+
+async def test_remask_image_round_trip(keyed, session, mock, images_route, sample_render, tmp_path):
+    images_route.mock(return_value=images_ok())
+    first_mask = _halves_mask(tmp_path / "mask-right.png", left=False)
+    edited = await session.call_tool(
+        "edit_image",
+        {"prompt": "x", "model": SUNBURST, "images": [str(sample_render)],
+         "mask_path": str(first_mask)},
+    )
+    assert edited.is_error is False
+    source = next(sample_render.parent.glob("Sample_Render_v5__*_1.png"))
+    assert source.with_suffix(".unmasked.png").is_file()
+    calls_before = mock.calls.call_count
+
+    new_mask = _halves_mask(tmp_path / "mask-left.png", left=True)
+    result = await session.call_tool(
+        "remask_image",
+        {"image": str(source), "mask_path": str(new_mask), "mask_feather_px": 0},
+    )
+
+    assert result.is_error is False
+    assert mock.calls.call_count == calls_before  # nothing sent anywhere
+    saved = next(sample_render.parent.glob(f"{source.stem}__remask_*_1.png"))
+    text = text_of(result)
+    lines = text.splitlines()
+    assert lines[0] == f"Saved: {saved}  (sidecar: {saved.with_suffix('.json')})"
+    assert lines[1] == "Cost: $0.00 (local re-blend, nothing uploaded)"
+    imgs = [c for c in result.content if isinstance(c, ImageContent)]
+    assert len(imgs) == 1 and imgs[0].mime_type == "image/jpeg"
+    assert Image.open(BytesIO(base64.b64decode(imgs[0].data))).format == "JPEG"
+    out = Image.open(saved).convert("RGB")
+    layer = Image.open(source.with_suffix(".unmasked.png")).convert("RGB")
+    original = Image.open(sample_render).convert("RGB")
+    left, right = (0, 0, 960, 828), (960, 0, 1920, 828)
+    assert out.crop(left).tobytes() == layer.crop(left).tobytes()
+    assert out.crop(right).tobytes() == original.crop(right).tobytes()
+
+
+async def test_remask_image_errors_are_tool_errors(keyed, session, images_route, sample_render, tmp_path):
+    images_route.mock(return_value=images_ok())
+    edited = await session.call_tool(
+        "edit_image", {"prompt": "x", "model": SUNBURST, "images": [str(sample_render)]}
+    )
+    assert edited.is_error is False
+    plain = next(sample_render.parent.glob("Sample_Render_v5__*_1.png"))
+    mask = _halves_mask(tmp_path / "mask.png")
+
+    result = await session.call_tool("remask_image", {"image": str(plain), "mask_path": str(mask)})
+    assert error_text(result) == (
+        "This image wasn't made with a mask, so there is no unblended layer to re-mask."
+    )
+
+    result = await session.call_tool(
+        "remask_image", {"image": "relative/pic.png", "mask_path": str(mask)}
+    )
+    assert "absolute" in error_text(result)
+
+    result = await session.call_tool(
+        "remask_image", {"image": str(tmp_path / "nope.png"), "mask_path": str(mask)}
+    )
+    assert "not found" in error_text(result)
 
 
 # ------------------------------------------------------------------ errors

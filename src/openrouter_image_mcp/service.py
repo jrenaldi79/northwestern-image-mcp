@@ -36,12 +36,13 @@ from .imaging import (
     InputError,
     PreparedImage,
     apply_fit,
+    check_mask,
     composite_mask,
     make_preview,
     pad_to_ratio,
     plan_fit,
     prepare_input,
-    resolve_user_path,
+    user_dir,
 )
 from .outputs import (
     choose_dir,
@@ -127,26 +128,6 @@ class _Job:
     fit_model: bool = False
     previews: int = 0
     provider: dict | None = None  # the request's `provider` object: options keyed by slug
-
-
-def _user_dir(output_dir: str | None) -> Path | None:
-    if output_dir is None:
-        return None
-    path = Path(output_dir).expanduser()
-    if not path.is_absolute():
-        raise InputError(f"output_dir must be absolute or start with '~': {output_dir!r}")
-    return path
-
-
-def _check_mask(mask_path: str) -> Path:
-    """Resolve the mask and prove it decodes, so a bad mask fails before any spend."""
-    path = resolve_user_path(mask_path)
-    try:
-        with Image.open(path) as opened:
-            opened.load()
-    except (UnidentifiedImageError, OSError, SyntaxError, ValueError, Image.DecompressionBombError) as e:
-        raise InputError(f"Cannot read mask {path} as an image: {e}") from e
-    return path
 
 
 def _error_text(exc: Exception) -> str:
@@ -260,7 +241,7 @@ class ImageService:
         notes = self._validate(m, n, send, provider_options, input_count=0)
         provider = await self._provider_object(m, provider_options)
         directory, dir_note = choose_dir(
-            _user_dir(output_dir) or self._settings.output_dir, self._settings.output_dir
+            user_dir(output_dir) or self._settings.output_dir, self._settings.output_dir
         )
         job = _Job(
             tool="generate_image", prompt=prompt, model=m, n=n, send=send,
@@ -289,7 +270,7 @@ class ImageService:
             raise BadRequestError(_R11)
         if fit == "preserve" and size is not None:
             raise BadRequestError(_R15)
-        mask = _check_mask(mask_path) if mask_path is not None else None
+        mask = check_mask(mask_path) if mask_path is not None else None
 
         send = {"aspect_ratio": aspect_ratio, "resolution": resolution, "size": size,
                 "quality": quality, "seed": seed, "background": background,
@@ -321,7 +302,7 @@ class ImageService:
                 notes.append(f"{m.id} has no aspect_ratio setting; outputs were cropped to {w}×{h}.")
 
         directory, dir_note = choose_dir(
-            _user_dir(output_dir) or primary.path.parent, self._settings.output_dir
+            user_dir(output_dir) or primary.path.parent, self._settings.output_dir
         )
         if dir_note:
             notes.append(dir_note)

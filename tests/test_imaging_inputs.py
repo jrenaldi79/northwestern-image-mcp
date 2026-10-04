@@ -9,9 +9,11 @@ from PIL import Image
 from openrouter_image_mcp.imaging import (
     InputError,
     PreparedImage,
+    check_mask,
     make_preview,
     prepare_input,
     resolve_user_path,
+    user_dir,
 )
 
 
@@ -218,3 +220,27 @@ def test_preview_rgba_flattened_on_white():
     assert img.mode == "RGB"
     r, g, b = img.getpixel((25, 25))
     assert r > 240 and g > 240 and b > 240
+
+
+def test_check_mask_returns_resolved_path(tmp_path):
+    mask = save(Image.new("L", (8, 8), 255), tmp_path / "mask.png", "PNG")
+    assert check_mask(str(mask)) == mask
+
+
+def test_check_mask_rejects_undecodable_file(tmp_path):
+    bad = tmp_path / "mask.png"
+    bad.write_bytes(b"this is not an image")
+    with pytest.raises(InputError, match="Cannot read mask"):
+        check_mask(str(bad))
+
+
+def test_check_mask_rejects_relative_path():
+    with pytest.raises(InputError, match="absolute"):
+        check_mask("relative/mask.png")
+
+
+def test_user_dir(tmp_path):
+    assert user_dir(None) is None
+    assert user_dir(str(tmp_path)) == tmp_path
+    with pytest.raises(InputError, match="output_dir must be absolute"):
+        user_dir("relative/out")

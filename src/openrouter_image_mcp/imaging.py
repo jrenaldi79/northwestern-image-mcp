@@ -60,6 +60,27 @@ def resolve_user_path(p: str) -> Path:
     return path
 
 
+def user_dir(output_dir: str | None) -> Path | None:
+    """Expand `~` in a user-given output folder; None stays None. Relative is an InputError."""
+    if output_dir is None:
+        return None
+    path = Path(output_dir).expanduser()
+    if not path.is_absolute():
+        raise InputError(f"output_dir must be absolute or start with '~': {output_dir!r}")
+    return path
+
+
+def check_mask(mask_path: str) -> Path:
+    """Resolve the mask and prove it decodes, so a bad mask fails before any work or spend."""
+    path = resolve_user_path(mask_path)
+    try:
+        with Image.open(path) as opened:
+            opened.load()
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError, Image.DecompressionBombError) as e:
+        raise InputError(f"Cannot read mask {path} as an image: {e}") from e
+    return path
+
+
 def _has_alpha(img: Image.Image) -> bool:
     return img.mode in _ALPHA_MODES or (img.mode in ("P", "L", "RGB", "1") and "transparency" in img.info)
 

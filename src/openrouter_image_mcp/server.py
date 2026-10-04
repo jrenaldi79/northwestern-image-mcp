@@ -6,11 +6,13 @@ with a readable message; anything unexpected propagates and the SDK reports it
 without details. All text output passes through `redact`.
 """
 
+import asyncio
 import base64
 import inspect
 import webbrowser
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -27,6 +29,7 @@ from .config import Settings, load_settings
 from .errors import AuthRequiredError, CatalogUnavailableError, OpenRouterError
 from .imaging import InputError
 from .logs import configure_logging, redact
+from .remask import remask
 from .service import ImageService, ProgressFn, ServiceResult
 
 SERVER_NAME = "openrouter-image"
@@ -295,7 +298,7 @@ def _add(server: MCPServer, fn: Callable[..., Any]) -> None:
 
 
 def build_server(settings: Settings, client: OpenRouterClient | None = None) -> MCPServer:
-    """Create the MCP server with the seven tools, sharing one client/catalog/service/login."""
+    """Create the MCP server with the eight tools, sharing one client/catalog/service/login."""
     owns_client = client is None
     http = client if client is not None else OpenRouterClient(timeout_s=settings.timeout_s)
     catalog = Catalog(http)
@@ -527,7 +530,9 @@ def build_server(settings: Settings, client: OpenRouterClient | None = None) -> 
                 black = keep. The edit is composited locally, so only the white area
                 changes, but there may be a visible lighting seam at the mask edge where
                 new and old pixels meet; a soft mask edge or mask_feather_px helps.
-                Requires fit="preserve".
+                Requires fit="preserve". A masked edit also saves the model's image
+                before the blend as `<result>.unmasked.png`, so `remask_image` can redo
+                the blend with a different mask for free.
             mask_feather_px: Blur radius in pixels for the mask edge; by default it is
                 chosen from the image size.
             fit: "preserve" (default) returns each result at exactly the first input's
@@ -563,9 +568,65 @@ def build_server(settings: Settings, client: OpenRouterClient | None = None) -> 
             )
         return _image_result(result)
 
+    async def remask_image(
+        image: str,
+        mask_path: str,
+        mask_feather_px: int | None = None,
+        output_dir: str | None = None,
+    ) -> ImageResult:
+        """Redo the mask blend of a masked `edit_image` result with a new mask: free and offline.
+
+        Use it when a masked edit came back with a good change that blends badly, such as
+        a seam or a ghosted edge where the model drew past the mask (a limb or shadow cut
+        off at the mask edge), or when the mask should have been bigger or smaller. Draw a
+        new mask and call this instead of paying for another `edit_image`: it re-blends the
+        model's image that the edit already returned, on this computer. Nothing is
+        uploaded, no model is called and it costs nothing.
+
+        It needs a result made by `edit_image` with `mask_path` by openrouter-image-mcp
+        0.2.0 or later: those keep the model's image before the blend as
+        `<result>.unmasked.png`, next to the result and its .json sidecar. The original
+        input image must still be in place and unchanged. A re-masked result can itself
+        be re-masked.
+
+        All paths must be absolute (or start with "~"); relative paths are rejected. The
+        new image is saved as a PNG next to `image` (never overwriting) with a JSON
+        sidecar, unless output_dir is given. The result lists the saved path, plus a JPEG
+        preview.
+
+        Args:
+            image: Absolute path of a masked `edit_image` result (or of an earlier
+                `remask_image` result).
+            mask_path: Absolute path of the new mask for the original input: white = take
+                the model's image, black = keep the original. Any size; it is stretched
+                to the input's size.
+            mask_feather_px: Blur radius in pixels for the mask edge; by default it is
+                chosen from the image size.
+            output_dir: Folder to save into instead of next to `image`. Must be an
+                absolute path or start with "~".
+        """
+        with _tool_errors():
+            done = await asyncio.to_thread(
+                remask, image, mask_path, mask_feather_px, output_dir, settings,
+                datetime.now().astimezone(),
+            )
+        lines = [
+            f"Saved: {done.path}  (sidecar: {done.sidecar})",
+            "Cost: $0.00 (local re-blend, nothing uploaded)",
+        ]
+        if done.note:
+            lines += ["Notes:", f"- {done.note}"]
+        return [
+            TextContent(type="text", text=redact("\n".join(lines))),
+            ImageContent(
+                type="image", data=base64.b64encode(done.preview_jpeg).decode("ascii"),
+                mime_type="image/jpeg",
+            ),
+        ]
+
     for fn in (
         account_status, auth_login, auth_logout, list_image_models, get_image_model,
-        generate_image, edit_image,
+        generate_image, edit_image, remask_image,
     ):
         _add(server, fn)
     return server

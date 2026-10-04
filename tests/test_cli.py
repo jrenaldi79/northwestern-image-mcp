@@ -14,7 +14,7 @@ from openrouter_image_mcp import auth, cli, keystore
 from openrouter_image_mcp.auth import LoginState
 from openrouter_image_mcp.errors import OpenRouterError
 
-REF_URL = "git+https://github.com/skelly-77/openrouter-image-mcp@v0.1.0"
+REF_URL = "git+https://github.com/skelly-77/openrouter-image-mcp@v0.2.0"
 HOME = Path(r"C:\Users\user")
 
 

@@ -15,8 +15,13 @@ It runs on your machine over stdio and is installed with `uvx` straight from thi
 | `get_image_model` | Shows one model's real aspect ratios, resolutions, quality values, limits and pricing. |
 | `generate_image` | Text to image. Saves to `~/Pictures/OpenRouter Images` unless you give `output_dir`. |
 | `edit_image` | One or more input images plus a prompt to a new image. Supports masks and exact output sizes. |
+| `remask_image` | Redoes the mask blend of a masked `edit_image` result with a new mask. Runs locally: free, nothing uploaded. |
 
 The `skills/` folder holds two companion skills: `openrouter-image` (model choice, cost habits, masks, moderation) and `architectural-render-polish`.
+
+### Fixing a seam after a masked edit
+
+A masked edit blends the model's image into the original through the mask. If the model drew past the mask (an arm or a shadow cut off at the edge) you can get a ghosted seam even when the new content itself is good. Since v0.2.0 every masked edit also saves the model's image before the blend as `<result>.unmasked.png`, at the input's exact size, and records it as `unmasked_path` in the sidecar (`null` for results made without a mask). Draw a bigger or smaller mask and ask Claude to run `remask_image` on the result: it re-blends that saved layer over the original input on your machine, so it costs nothing and nothing is uploaded. It needs the original input unchanged in its place, and results made by earlier versions can't be re-masked.
 
 ## Prerequisites
 
@@ -46,7 +51,7 @@ This installs the server config and both skills.
 1. Print a config snippet filled in with this machine's paths:
 
    ```
-   uvx --from git+https://github.com/skelly-77/openrouter-image-mcp@v0.1.0 openrouter-image-mcp print-config --client desktop
+   uvx --from git+https://github.com/skelly-77/openrouter-image-mcp@v0.2.0 openrouter-image-mcp print-config --client desktop
    ```
 
 2. Open the config file through **Settings → Developer → Edit Config** and merge the `openrouter-image` entry into its `mcpServers` object (back the file up first). Use this route on the Microsoft Store (MSIX) build in particular: edits made by hand under `%APPDATA%\Claude` can be redirected or vanish there. The command only prints; it never edits files.
@@ -54,7 +59,7 @@ This installs the server config and both skills.
 
 **Why the `UV_*` variables?** The Microsoft Store (MSIX) build of Claude Desktop virtualizes writes under `AppData`, so uv's default cache, tools and Python folders can be hidden or discarded. The snippet sets `UV_PYTHON_INSTALL_DIR`, `UV_CACHE_DIR` and `UV_TOOL_DIR` to real folders under `%USERPROFILE%\.uv`, written out literally because the config file does not expand variables.
 
-**Skills for Desktop:** download the repo for the release tag ([v0.1.0 zip](https://github.com/skelly-77/openrouter-image-mcp/archive/refs/tags/v0.1.0.zip)), unzip it, then zip each folder under `skills/` on its own (so each zip contains the skill folder with its `SKILL.md`) and upload them in Settings → Capabilities.
+**Skills for Desktop:** download the repo for the release tag ([v0.2.0 zip](https://github.com/skelly-77/openrouter-image-mcp/archive/refs/tags/v0.2.0.zip)), unzip it, then zip each folder under `skills/` on its own (so each zip contains the skill folder with its `SKILL.md`) and upload them in Settings → Capabilities.
 
 ### GitHub Copilot Code (to be confirmed)
 
@@ -67,7 +72,7 @@ Not yet verified: the config file location, its exact format and the skills fold
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/skelly-77/openrouter-image-mcp@v0.1.0",
+        "git+https://github.com/skelly-77/openrouter-image-mcp@v0.2.0",
         "openrouter-image-mcp"
       ]
     }
@@ -82,7 +87,7 @@ If its sandbox cannot open a browser or reach the credential store, sign in from
 Either run this in a terminal:
 
 ```
-uvx --from git+https://github.com/skelly-77/openrouter-image-mcp@v0.1.0 openrouter-image-mcp login
+uvx --from git+https://github.com/skelly-77/openrouter-image-mcp@v0.2.0 openrouter-image-mcp login
 ```
 
 or just ask Claude to run `auth_login`, then approve in the browser. The key is stored in your operating system's credential store (Windows Credential Manager, macOS Keychain) and nowhere else. Other commands: `status`, `logout`, `login --switch` (different account).

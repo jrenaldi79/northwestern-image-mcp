@@ -179,7 +179,7 @@ def sample_render(tmp_path):
 async def test_build_server_returns_named_mcpserver(server):
     assert isinstance(server, MCPServer)
     assert server.name == "openrouter-image"
-    assert server.version == "0.1.0"
+    assert server.version == "0.2.0"
 
 
 async def test_tool_names(session):

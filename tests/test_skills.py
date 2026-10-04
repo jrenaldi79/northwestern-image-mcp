@@ -20,8 +20,9 @@ TOOL_NAMES = {
     "get_image_model",
     "generate_image",
     "edit_image",
+    "remask_image",
 }
-TOOL_LIKE = re.compile(r"^(account|auth|list|get|generate|edit)_[a-z_]+$")
+TOOL_LIKE = re.compile(r"^(account|auth|list|get|generate|edit|remask)_[a-z_]+$")
 FENCE = re.compile(r"^```.*?^```", re.MULTILINE | re.DOTALL)
 INLINE_CODE = re.compile(r"`([^`\n]+)`")
 CALL = re.compile(r"\b([a-z_][a-z0-9_]*)\s*\(")
@@ -115,6 +116,13 @@ def test_skills_reference_real_tools(path):
 @pytest.mark.parametrize("path", skill_mds(), ids=lambda p: p.parent.name)
 def test_skills_require_consent_for_client_imagery(path):
     assert "explicit OK" in read(path)
+
+
+def test_masks_section_points_to_remask_image():
+    text = read(SKILLS_DIR / "openrouter-image" / "SKILL.md")
+    section = text.split("## Edits: paths, size and masks", 1)[1].split("\n## ", 1)[0]
+    assert "`remask_image`" in section
+    assert ".unmasked.png" in section
 
 
 def test_model_rules_of_thumb_are_dated():

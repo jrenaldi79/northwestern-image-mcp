@@ -20,6 +20,7 @@ The openrouter-image MCP server sends prompts and images to any OpenRouter image
 | `get_image_model(model_id)` | Exact aspect ratios, resolutions, quality values, max `n`, max input images, passthrough options, pricing. |
 | `generate_image(prompt, model, ...)` | Text to image. Saves to the default output folder unless `output_dir` is given. |
 | `edit_image(prompt, model, images, ...)` | Image(s) plus prompt to image. The first image is the primary; the rest are references. |
+| `remask_image(image, mask_path, ...)` | Redo a masked edit's blend with a new mask, locally and free. |
 
 ## Before uploading client or project imagery
 
@@ -39,6 +40,8 @@ Ask the user for an explicit OK before the first `edit_image` call that sends a 
 - **`fit="model"`** returns whatever the model made, untouched. Use it only when the user doesn't need the original size.
 - **Extending or reframing** (outpainting, a new aspect ratio) needs `fit="model"` with an `aspect_ratio`: the output is no longer the input's size, and masks can't be used.
 - **Masks** (`mask_path`, greyscale): white = may change, black = keep pixel-identical. The edge is feathered (`mask_feather_px`, default 0.5% of the short edge). A lighting seam can show at the mask edge; widen the feather or the white area if it does. Masks can't be combined with `fit="model"`. Black areas stay pixel-identical only with PNG output (the default); a JPEG or WebP `output_format` re-compresses them.
+
+**Fix a seam with `remask_image`, not a new edit.** A masked edit also saves the model's image before the blend as `<result>.unmasked.png`. If the new content is good but blends badly (a ghosted edge where the model drew past the mask, or the mask was too small or too large), draw a corrected mask and call `remask_image(image=<result>, mask_path=<new mask>)`. It re-blends locally: free, nothing uploaded, no new consent needed. It needs a masked result from server v0.2.0 or later and the original input unchanged; otherwise it says so, and only then is a new `edit_image` warranted.
 
 ## Results
 

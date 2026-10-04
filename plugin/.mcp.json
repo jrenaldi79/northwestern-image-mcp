@@ -4,7 +4,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/skelly-77/openrouter-image-mcp@v0.1.0",
+        "git+https://github.com/skelly-77/openrouter-image-mcp@v0.2.0",
         "openrouter-image-mcp"
       ]
     }

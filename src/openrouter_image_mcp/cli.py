@@ -26,7 +26,7 @@ from .logs import configure_logging, redact
 
 REPO_URL = "git+https://github.com/skelly-77/openrouter-image-mcp"
 SERVER_NAME = "openrouter-image"
-DEFAULT_REF = "v0.1.0"
+DEFAULT_REF = "v0.2.0"
 COPILOT_NOTE = (
     "Unverified: Copilot Code's MCP config format has not been confirmed yet. "
     "The standard stdio entry is printed to stdout."

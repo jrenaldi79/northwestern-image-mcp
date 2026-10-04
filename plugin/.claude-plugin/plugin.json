@@ -1,6 +1,6 @@
 {
   "name": "openrouter-image",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Generate and edit images with any OpenRouter image model, plus skills for model choice and architectural render polish.",
   "author": {
     "name": "skelly-77"

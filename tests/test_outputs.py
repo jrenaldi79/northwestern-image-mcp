@@ -87,7 +87,7 @@ def test_sidecar_contents(tmp_path):
     assert raw.startswith("{\n  ")  # indent=2
     data = json.loads(raw)
     assert data["schema_version"] == 1
-    assert data["server_version"] == "0.1.0"
+    assert data["server_version"] == "0.2.0"
     assert data["prompt"] == "café à Zürich — 東京"
     assert "sk-or-" not in raw
     assert "schema_version" in meta and meta["schema_version"] == 99  # input not mutated

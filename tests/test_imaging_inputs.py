@@ -3,18 +3,42 @@ import hashlib
 from io import BytesIO
 
 import pytest
-from helpers import make_grid, save
+from helpers import make_grid, save, unc_paths
 from PIL import Image
 
 from openrouter_image_mcp.imaging import (
     InputError,
     PreparedImage,
     check_mask,
+    is_network_path,
     make_preview,
     prepare_input,
     resolve_user_path,
     user_dir,
 )
+
+
+@pytest.mark.parametrize("path", [*unc_paths("x.png"), r"\\?\C:\x.png", r"\\.\pipe\x", "//evil-host"])
+def test_is_network_path_true(path):
+    assert is_network_path(path)
+
+
+@pytest.mark.parametrize("path", [r"C:\x.png", "C:/x.png", "/home/u/x.png", "~/x.png", "rel/x.png", r"\x.png", ""])
+def test_is_network_path_false(path):
+    assert not is_network_path(path)
+
+
+@pytest.mark.parametrize("path", unc_paths("x.png"))
+def test_network_paths_rejected_without_touching_them(path, no_network_probe):
+    with pytest.raises(InputError, match="Network .*paths aren't supported"):
+        resolve_user_path(path)
+    with pytest.raises(InputError, match="Network .*paths aren't supported"):
+        check_mask(path)
+    with pytest.raises(InputError, match="Network .*paths aren't supported"):
+        prepare_input(path, 2048)
+    with pytest.raises(InputError, match="Network .*paths aren't supported"):
+        user_dir(path)
+    assert no_network_probe == []
 
 
 def test_relative_path_rejected():

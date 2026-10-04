@@ -11,7 +11,7 @@ import hashlib
 import math
 from dataclasses import dataclass
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Literal
 
 from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
@@ -48,8 +48,32 @@ class PreparedImage:
         return f"data:{self.mime};base64,{base64.b64encode(self.encoded).decode('ascii')}"
 
 
+def is_network_path(text: str) -> bool:
+    r"""True for UNC / network / device paths, on every platform.
+
+    Windows treats '/' and '\' alike, so `\\host\share`, `//host/share`, `\/host/share`,
+    `/\host\share` and `\\?\UNC\host\share` are all one thing: a path whose stat opens
+    SMB and can leak the user's NTLM credentials. Never stat a path this returns True for.
+    `\\?\C:\...` and `\\.\...` device paths are refused too.
+    """
+    return (
+        text.replace("/", "\\").startswith("\\\\")
+        or PureWindowsPath(text).drive.startswith("\\\\")
+    )
+
+
+def reject_network_path(p: str, what: str = "paths") -> None:
+    """Raise InputError for a network path, before anything touches the filesystem."""
+    if is_network_path(p):
+        raise InputError(f"Network (UNC) paths aren't supported for {what}: {p!r}")
+
+
 def resolve_user_path(p: str) -> Path:
-    """Expand `~` and return an existing absolute file path, else raise InputError."""
+    """Expand `~` and return an existing absolute local file path, else raise InputError.
+
+    Network (UNC) paths are rejected without being touched.
+    """
+    reject_network_path(p)
     path = Path(p).expanduser()
     if not path.is_absolute():
         raise InputError(f"Path must be absolute or start with '~': {p!r}")
@@ -61,9 +85,13 @@ def resolve_user_path(p: str) -> Path:
 
 
 def user_dir(output_dir: str | None) -> Path | None:
-    """Expand `~` in a user-given output folder; None stays None. Relative is an InputError."""
+    """Expand `~` in a user-given output folder; None stays None.
+
+    A relative or network (UNC) folder is an InputError.
+    """
     if output_dir is None:
         return None
+    reject_network_path(output_dir, "output_dir")
     path = Path(output_dir).expanduser()
     if not path.is_absolute():
         raise InputError(f"output_dir must be absolute or start with '~': {output_dir!r}")

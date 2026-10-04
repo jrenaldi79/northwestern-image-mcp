@@ -52,3 +52,17 @@ def save(img: Image.Image, path, fmt: str, exif_orientation: int | None = None) 
         kwargs["exif"] = exif.tobytes()
     img.save(path, format=fmt, **kwargs)
     return path
+
+
+def unc_paths(name: str) -> list[str]:
+    """Network (UNC) spellings of `name` on a remote share, including mixed separators.
+
+    Windows treats '/' and backslash alike, so all of these open SMB if anything stats them.
+    """
+    return [
+        rf"\\evil-host\share\{name}",
+        f"//evil-host/share/{name}",
+        rf"\/evil-host/share/{name}",
+        rf"/\evil-host\share\{name}",
+        rf"\\?\UNC\evil-host\share\{name}",
+    ]

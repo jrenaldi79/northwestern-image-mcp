@@ -15,7 +15,7 @@ import keyring.backend
 import keyring.errors
 import pytest
 import respx
-from helpers import make_grid, save
+from helpers import make_grid, save, unc_paths
 from mcp import Client
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ImageContent, TextContent
@@ -399,10 +399,9 @@ async def test_remask_image_errors_are_tool_errors(keyed, session, images_route,
     )
     assert "absolute" in error_text(result)
 
-    result = await session.call_tool(
-        "remask_image", {"image": "\\\\evil-host\\share\\pic.png", "mask_path": str(mask)}
-    )
-    assert "Network" in error_text(result)
+    for unc in unc_paths("pic.png"):
+        result = await session.call_tool("remask_image", {"image": unc, "mask_path": str(mask)})
+        assert "Network" in error_text(result), unc
 
     result = await session.call_tool(
         "remask_image", {"image": str(tmp_path / "nope.png"), "mask_path": str(mask)}
@@ -411,6 +410,14 @@ async def test_remask_image_errors_are_tool_errors(keyed, session, images_route,
 
 
 # ------------------------------------------------------------------ errors
+
+
+async def test_edit_image_mixed_separator_unc_is_tool_error(keyed, session, mock):
+    result = await session.call_tool(
+        "edit_image", {"prompt": "x", "model": SUNBURST, "images": [r"\/evil-host/share/pic.png"]}
+    )
+    assert "Network" in error_text(result)
+    assert mock.calls.call_count == 0  # rejected before the catalog or any generation
 
 
 async def test_errors_are_tool_errors(memory_keyring, session, images_route, sample_render):

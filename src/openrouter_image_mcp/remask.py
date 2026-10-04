@@ -21,8 +21,10 @@ from .imaging import (
     InputError,
     check_mask,
     composite_mask,
+    is_network_path,
     make_preview,
     prepare_input,
+    reject_network_path,
     resolve_user_path,
     user_dir,
 )
@@ -48,7 +50,6 @@ CHANGED_ORIGINAL_MSG = (
     "The original input image has changed since this result was made ({path}), so the "
     "unblended layer no longer lines up with it. Restore the original, or run edit_image again."
 )
-_NETWORK_PREFIXES = ("\\\\", "//")
 
 
 @dataclass
@@ -59,24 +60,12 @@ class RemaskResult:
     notes: list[str]  # e.g. a fallback output folder, or the layer found next to a moved result
 
 
-def _is_network(text: str) -> bool:
-    """UNC / network paths. Never stat these: on Windows that opens SMB and can leak NTLM."""
-    return text.startswith(_NETWORK_PREFIXES)
-
-
-def _local(text: str | None, what: str) -> str | None:
-    """Reject a caller-supplied network path before anything touches the filesystem."""
-    if text is not None and _is_network(text):
-        raise InputError(f"Network (UNC) paths aren't supported for {what}: {text!r}")
-    return text
-
-
 def _sidecar_path(value: object, what: str, suffix: str | None = None) -> Path:
     """A path recorded in the sidecar: untrusted, so it must be a local absolute path."""
     problem = None
     if not isinstance(value, str) or not value:
         problem = "it is not a path"
-    elif _is_network(value):
+    elif is_network_path(value):
         problem = "network (UNC) paths aren't allowed"
     elif not Path(value).is_absolute():
         problem = "it is not absolute"
@@ -138,9 +127,10 @@ def remask(
     but `<result>.unmasked.png` sits next to the result (a moved folder), that is used,
     with a note; the original input is never guessed.
     """
-    result = resolve_user_path(_local(result_path, "image"))
-    mask_path = _local(mask_path, "mask_path")
-    out_dir = user_dir(_local(output_dir, "output_dir"))
+    # The shared helpers refuse network (UNC) paths before touching them.
+    result = resolve_user_path(result_path)
+    reject_network_path(mask_path, "mask_path")  # fail early; check_mask runs later
+    out_dir = user_dir(output_dir)
     meta = _read_sidecar(result)
     notes: list[str] = []
     if meta.get("mask") is None:

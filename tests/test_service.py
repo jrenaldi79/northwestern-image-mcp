@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 import respx
-from helpers import make_grid, save
+from helpers import make_grid, save, unc_paths
 from PIL import Image
 
 from openrouter_image_mcp import keystore, outputs, service
@@ -658,6 +658,28 @@ async def test_garbage_mask_rejected_before_network(svc, mock, sample_render, tm
     with pytest.raises(InputError, match="mask"):
         await svc.edit("x", SUNBURST, [str(sample_render)], mask_path=str(bad))
     assert mock.calls.call_count == 0
+
+
+@pytest.mark.parametrize("unc", unc_paths("pic.png"))
+async def test_edit_rejects_network_input_before_any_call(svc, mock, sample_render, no_network_probe, unc):
+    with pytest.raises(InputError, match="Network .*paths aren't supported"):
+        await svc.edit("x", SUNBURST, [str(sample_render), unc])
+    assert mock.calls.call_count == 0  # no catalog lookup, no generation
+    assert no_network_probe == []
+
+
+@pytest.mark.parametrize("unc", [r"\/evil-host/share/m.png", r"/\evil-host\share\m.png"])
+async def test_edit_rejects_network_mask_and_output_dir_before_any_call(
+    svc, mock, sample_render, no_network_probe, unc
+):
+    with pytest.raises(InputError, match="Network .*paths aren't supported"):
+        await svc.edit("x", SUNBURST, [str(sample_render)], mask_path=unc)
+    with pytest.raises(InputError, match="Network .*paths aren't supported"):
+        await svc.edit("x", SUNBURST, [str(sample_render)], output_dir=unc)
+    with pytest.raises(InputError, match="Network .*paths aren't supported"):
+        await svc.generate("x", SUNBURST, output_dir=unc)
+    assert mock.calls.call_count == 0
+    assert no_network_probe == []
 
 
 async def test_save_failure_mid_loop_keeps_other_images(svc, images_route, monkeypatch):

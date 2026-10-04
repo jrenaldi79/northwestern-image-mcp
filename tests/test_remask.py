@@ -2,13 +2,12 @@
 
 import hashlib
 import json
-import pathlib
 import shutil
 from datetime import UTC, datetime
 from io import BytesIO
 
 import pytest
-from helpers import make_grid, save
+from helpers import make_grid, save, unc_paths
 from PIL import Image
 
 from openrouter_image_mcp.config import Settings
@@ -229,25 +228,7 @@ def test_moved_folder_never_guesses_the_original(source, settings, tmp_path):
 
 # --------------------------------------------------- untrusted sidecar paths
 
-UNC = ["\\\\evil-host\\share\\x.unmasked.png", "//evil-host/share/x.unmasked.png"]
-
-
-@pytest.fixture
-def no_network_probe(monkeypatch):
-    """Fail if anything stats a UNC path: on Windows that opens SMB (and can leak NTLM)."""
-    seen = []
-    for name in ("exists", "is_file", "is_dir", "stat"):
-        real = getattr(pathlib.Path, name)
-
-        def guarded(self, *args, _real=real, **kwargs):
-            text = str(self)
-            if text.startswith(("\\\\", "//")):
-                seen.append(text)
-                raise AssertionError(f"stat of network path {text}")
-            return _real(self, *args, **kwargs)
-
-        monkeypatch.setattr(pathlib.Path, name, guarded)
-    return seen
+UNC = unc_paths("x.unmasked.png")  # incl. mixed `\/` and `/\` and `\\?\UNC\` spellings
 
 
 def rewrite_sidecar(result, **changes):
@@ -298,7 +279,7 @@ def test_sidecar_mask_must_be_an_object(source, settings, tmp_path, value):
         remask(str(result), str(mask), 0, None, settings, NOW)
 
 
-@pytest.mark.parametrize("unc", ["\\\\evil-host\\share\\file.png", "//evil-host/share/file.png"])
+@pytest.mark.parametrize("unc", unc_paths("file.png"))
 @pytest.mark.parametrize("which", ["result", "mask", "output_dir"])
 def test_caller_network_paths_rejected(source, settings, tmp_path, no_network_probe, unc, which):
     _, result, _, _ = source

@@ -1,3 +1,5 @@
+import pathlib
+
 import keyring
 import keyring.backend
 import keyring.errors
@@ -35,3 +37,24 @@ def memory_keyring():
         yield backend
     finally:
         keyring.set_keyring(previous)
+
+
+@pytest.fixture
+def no_network_probe(monkeypatch):
+    r"""Fail if anything stats a UNC path: on Windows that opens SMB (and can leak NTLM).
+
+    Separators are normalised first, so mixed spellings such as `\/host/share` count.
+    """
+    seen = []
+    for name in ("exists", "is_file", "is_dir", "stat"):
+        real = getattr(pathlib.Path, name)
+
+        def guarded(self, *args, _real=real, **kwargs):
+            text = str(self)
+            if text.replace("/", "\\").startswith("\\\\"):
+                seen.append(text)
+                raise AssertionError(f"stat of network path {text}")
+            return _real(self, *args, **kwargs)
+
+        monkeypatch.setattr(pathlib.Path, name, guarded)
+    return seen

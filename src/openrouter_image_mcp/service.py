@@ -42,6 +42,7 @@ from .imaging import (
     pad_to_ratio,
     plan_fit,
     prepare_input,
+    reject_network_path,
     user_dir,
 )
 from .outputs import (
@@ -237,11 +238,12 @@ class ImageService:
         send = {"aspect_ratio": aspect_ratio, "resolution": resolution, "size": size,
                 "quality": quality, "seed": seed, "background": background,
                 "output_format": output_format}
+        out_dir = user_dir(output_dir)  # a relative or network folder fails before any call
         m = await self._catalog.get(model)
         notes = self._validate(m, n, send, provider_options, input_count=0)
         provider = await self._provider_object(m, provider_options)
         directory, dir_note = choose_dir(
-            user_dir(output_dir) or self._settings.output_dir, self._settings.output_dir
+            out_dir or self._settings.output_dir, self._settings.output_dir
         )
         job = _Job(
             tool="generate_image", prompt=prompt, model=m, n=n, send=send,
@@ -271,6 +273,9 @@ class ImageService:
         if fit == "preserve" and size is not None:
             raise BadRequestError(_R15)
         mask = check_mask(mask_path) if mask_path is not None else None
+        for p in images:  # a network path is refused before any call, and never touched
+            reject_network_path(p, "images")
+        out_dir = user_dir(output_dir)
 
         send = {"aspect_ratio": aspect_ratio, "resolution": resolution, "size": size,
                 "quality": quality, "seed": seed, "background": background,
@@ -302,7 +307,7 @@ class ImageService:
                 notes.append(f"{m.id} has no aspect_ratio setting; outputs were cropped to {w}×{h}.")
 
         directory, dir_note = choose_dir(
-            user_dir(output_dir) or primary.path.parent, self._settings.output_dir
+            out_dir or primary.path.parent, self._settings.output_dir
         )
         if dir_note:
             notes.append(dir_note)

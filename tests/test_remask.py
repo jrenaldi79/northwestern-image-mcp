@@ -2,6 +2,8 @@
 
 import hashlib
 import json
+import pathlib
+import shutil
 from datetime import UTC, datetime
 from io import BytesIO
 
@@ -103,7 +105,7 @@ def test_remask_reblends_through_the_new_mask(source, settings, tmp_path):
     assert img.crop(inside).tobytes() == Image.new("RGB", (W // 2, H), BLUE).tobytes()
     assert img.crop(outside).tobytes() == make_grid(W, H).crop(outside).tobytes()
     assert Image.open(BytesIO(out.preview_jpeg)).format == "JPEG"
-    assert out.note is None
+    assert out.notes == []
 
 
 def test_remask_sidecar_records_provenance(source, settings, tmp_path):
@@ -189,7 +191,123 @@ def test_remask_falls_back_when_dir_unwritable(source, settings, tmp_path, monke
     out = remask(str(result), str(mask), 0, None, settings, NOW)
 
     assert out.path.parent == settings.output_dir
-    assert out.note and str(result.parent) in out.note
+    assert len(out.notes) == 1 and str(result.parent) in out.notes[0]
+
+
+def test_moved_folder_uses_the_layer_next_to_the_result(source, settings, tmp_path):
+    """Result, layer and sidecar moved together; the original input stayed put."""
+    _, result, layer, _ = source
+    moved = tmp_path / "moved"
+    moved.mkdir()
+    for p in (result, layer, result.with_suffix(".json")):
+        shutil.move(p, moved / p.name)
+    new_result, new_layer = moved / result.name, moved / layer.name
+    mask = left_half_mask(tmp_path / "new-mask.png")
+
+    out = remask(str(new_result), str(mask), 0, None, settings, NOW)
+
+    assert out.path.parent == moved
+    img = Image.open(out.path).convert("RGB")
+    inside = (0, 0, W // 2, H)
+    assert img.crop(inside).tobytes() == Image.new("RGB", (W // 2, H), BLUE).tobytes()
+    assert len(out.notes) == 1
+    assert str(layer) in out.notes[0] and str(new_layer) in out.notes[0]
+    side = json.loads(out.sidecar.read_text(encoding="utf-8"))
+    assert side["unmasked_path"] == new_layer.as_posix()
+
+
+def test_moved_folder_never_guesses_the_original(source, settings, tmp_path):
+    """The whole folder moved, original included: the recorded input is missing, so fail."""
+    original, result, _, _ = source
+    moved = tmp_path / "moved"
+    shutil.move(result.parent, moved)
+    assert (moved / original.name).is_file()  # a same-named file sits next to the result
+    mask = left_half_mask(tmp_path / "new-mask.png")
+    with pytest.raises(InputError, match="original input image .* is missing"):
+        remask(str(moved / result.name), str(mask), 0, None, settings, NOW)
+
+
+# --------------------------------------------------- untrusted sidecar paths
+
+UNC = ["\\\\evil-host\\share\\x.unmasked.png", "//evil-host/share/x.unmasked.png"]
+
+
+@pytest.fixture
+def no_network_probe(monkeypatch):
+    """Fail if anything stats a UNC path: on Windows that opens SMB (and can leak NTLM)."""
+    seen = []
+    for name in ("exists", "is_file", "is_dir", "stat"):
+        real = getattr(pathlib.Path, name)
+
+        def guarded(self, *args, _real=real, **kwargs):
+            text = str(self)
+            if text.startswith(("\\\\", "//")):
+                seen.append(text)
+                raise AssertionError(f"stat of network path {text}")
+            return _real(self, *args, **kwargs)
+
+        monkeypatch.setattr(pathlib.Path, name, guarded)
+    return seen
+
+
+def rewrite_sidecar(result, **changes):
+    sidecar = result.with_suffix(".json")
+    meta = json.loads(sidecar.read_text(encoding="utf-8"))
+    for key, value in changes.items():
+        if key == "input_path":
+            meta["inputs"][0]["path"] = value
+        else:
+            meta[key] = value
+    sidecar.write_text(json.dumps(meta), encoding="utf-8")
+
+
+@pytest.mark.parametrize("value", [*UNC, "proj/x.unmasked.png", 5])
+def test_sidecar_layer_path_must_be_absolute_and_local(source, settings, tmp_path, no_network_probe, value):
+    _, result, _, _ = source
+    rewrite_sidecar(result, unmasked_path=value)
+    mask = left_half_mask(tmp_path / "new-mask.png")
+    with pytest.raises(InputError, match="The sidecar records an invalid unblended-layer path"):
+        remask(str(result), str(mask), 0, None, settings, NOW)
+    assert no_network_probe == []
+
+
+def test_sidecar_layer_path_must_end_in_unmasked_png(source, settings, tmp_path):
+    original, result, _, _ = source
+    rewrite_sidecar(result, unmasked_path=original.as_posix())  # exists, but not a layer
+    mask = left_half_mask(tmp_path / "new-mask.png")
+    with pytest.raises(InputError, match=r"The sidecar records an invalid unblended-layer path.*\.unmasked\.png"):
+        remask(str(result), str(mask), 0, None, settings, NOW)
+
+
+@pytest.mark.parametrize("value", [*[u.replace(".unmasked", "") for u in UNC], "in.png", 7])
+def test_sidecar_input_path_must_be_absolute_and_local(source, settings, tmp_path, no_network_probe, value):
+    _, result, _, _ = source
+    rewrite_sidecar(result, input_path=value)
+    mask = left_half_mask(tmp_path / "new-mask.png")
+    with pytest.raises(InputError, match="The sidecar records an invalid original-input path"):
+        remask(str(result), str(mask), 0, None, settings, NOW)
+    assert no_network_probe == []
+
+
+@pytest.mark.parametrize("value", ["old-mask.png", True, ["x"]])
+def test_sidecar_mask_must_be_an_object(source, settings, tmp_path, value):
+    _, result, _, _ = source
+    rewrite_sidecar(result, mask=value)
+    mask = left_half_mask(tmp_path / "new-mask.png")
+    with pytest.raises(InputError, match="The sidecar records an invalid mask entry"):
+        remask(str(result), str(mask), 0, None, settings, NOW)
+
+
+@pytest.mark.parametrize("unc", ["\\\\evil-host\\share\\file.png", "//evil-host/share/file.png"])
+@pytest.mark.parametrize("which", ["result", "mask", "output_dir"])
+def test_caller_network_paths_rejected(source, settings, tmp_path, no_network_probe, unc, which):
+    _, result, _, _ = source
+    mask = left_half_mask(tmp_path / "new-mask.png")
+    args = {"result": str(result), "mask": str(mask), "output_dir": None}
+    args[which] = unc
+    with pytest.raises(InputError, match="Network .*paths aren't supported"):
+        remask(args["result"], args["mask"], 0, args["output_dir"], settings, NOW)
+    assert no_network_probe == []
 
 
 # ------------------------------------------------------------------- errors

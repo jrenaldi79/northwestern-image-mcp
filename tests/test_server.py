@@ -400,6 +400,11 @@ async def test_remask_image_errors_are_tool_errors(keyed, session, images_route,
     assert "absolute" in error_text(result)
 
     result = await session.call_tool(
+        "remask_image", {"image": "\\\\evil-host\\share\\pic.png", "mask_path": str(mask)}
+    )
+    assert "Network" in error_text(result)
+
+    result = await session.call_tool(
         "remask_image", {"image": str(tmp_path / "nope.png"), "mask_path": str(mask)}
     )
     assert "not found" in error_text(result)

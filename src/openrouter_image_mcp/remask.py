@@ -27,9 +27,11 @@ from .imaging import (
     user_dir,
 )
 from .outputs import (
+    UNMASKED_SUFFIX,
     choose_dir,
     encode_image,
     output_path,
+    unmasked_path,
     write_bytes_atomic,
     write_sidecar,
 )
@@ -46,6 +48,7 @@ CHANGED_ORIGINAL_MSG = (
     "The original input image has changed since this result was made ({path}), so the "
     "unblended layer no longer lines up with it. Restore the original, or run edit_image again."
 )
+_NETWORK_PREFIXES = ("\\\\", "//")
 
 
 @dataclass
@@ -53,7 +56,35 @@ class RemaskResult:
     path: Path
     sidecar: Path
     preview_jpeg: bytes
-    note: str | None  # e.g. the output folder wasn't writable and a fallback was used
+    notes: list[str]  # e.g. a fallback output folder, or the layer found next to a moved result
+
+
+def _is_network(text: str) -> bool:
+    """UNC / network paths. Never stat these: on Windows that opens SMB and can leak NTLM."""
+    return text.startswith(_NETWORK_PREFIXES)
+
+
+def _local(text: str | None, what: str) -> str | None:
+    """Reject a caller-supplied network path before anything touches the filesystem."""
+    if text is not None and _is_network(text):
+        raise InputError(f"Network (UNC) paths aren't supported for {what}: {text!r}")
+    return text
+
+
+def _sidecar_path(value: object, what: str, suffix: str | None = None) -> Path:
+    """A path recorded in the sidecar: untrusted, so it must be a local absolute path."""
+    problem = None
+    if not isinstance(value, str) or not value:
+        problem = "it is not a path"
+    elif _is_network(value):
+        problem = "network (UNC) paths aren't allowed"
+    elif not Path(value).is_absolute():
+        problem = "it is not absolute"
+    elif suffix is not None and not value.lower().endswith(suffix):
+        problem = f"it doesn't end in {suffix}"
+    if problem:
+        raise InputError(f"The sidecar records an invalid {what} path {value!r}: {problem}.")
+    return Path(value)
 
 
 def _read_sidecar(result: Path) -> dict:
@@ -76,13 +107,9 @@ def _source_input(meta: dict) -> tuple[Path, str]:
     """The original input's path and sha256, as recorded by the source result."""
     inputs = meta.get("inputs")
     first = inputs[0] if isinstance(inputs, list) and inputs else None
-    if not (
-        isinstance(first, dict)
-        and isinstance(first.get("path"), str)
-        and isinstance(first.get("sha256"), str)
-    ):
+    if not (isinstance(first, dict) and "path" in first and isinstance(first.get("sha256"), str)):
         raise InputError("The sidecar doesn't record the original input image.")
-    return Path(first["path"]), first["sha256"]
+    return _sidecar_path(first["path"], "original-input"), first["sha256"]
 
 
 def _open_layer(path: Path) -> Image.Image:
@@ -105,20 +132,37 @@ def remask(
     """Blend `result_path`'s unblended layer over its original input through a new mask.
 
     Saves a new PNG (never overwriting) with a sidecar next to the source result,
-    or in `output_dir`. Every path must be absolute or start with '~'.
+    or in `output_dir`. Every path must be absolute or start with '~', and network (UNC)
+    paths are rejected. Paths read from the sidecar are untrusted: they must be local and
+    absolute, and are checked before anything stats them. If the recorded layer is gone
+    but `<result>.unmasked.png` sits next to the result (a moved folder), that is used,
+    with a note; the original input is never guessed.
     """
-    result = resolve_user_path(result_path)
-    out_dir = user_dir(output_dir)
+    result = resolve_user_path(_local(result_path, "image"))
+    mask_path = _local(mask_path, "mask_path")
+    out_dir = user_dir(_local(output_dir, "output_dir"))
     meta = _read_sidecar(result)
+    notes: list[str] = []
     if meta.get("mask") is None:
         raise InputError(NO_MASK_MSG)
+    if not isinstance(meta["mask"], dict):
+        raise InputError(f"The sidecar records an invalid mask entry: {meta['mask']!r}.")
     if meta.get("unmasked_path") is None:
         raise InputError(NO_LAYER_KEY_MSG)
-    layer_path = Path(str(meta["unmasked_path"]))
-    if not layer_path.is_file():
-        raise InputError(f"The unblended layer {layer_path} is missing.")
-    original_path, original_sha = _source_input(meta)
-    if not original_path.is_file():
+    recorded = _sidecar_path(meta["unmasked_path"], "unblended-layer", UNMASKED_SUFFIX)
+    original_path, original_sha = _source_input(meta)  # validated before any stat
+    layer_path = recorded
+    if not recorded.is_file():
+        beside = unmasked_path(result)
+        if not beside.is_file():
+            raise InputError(f"The unblended layer {recorded} is missing.")
+        # The result's folder was moved or renamed: its layer moved with it.
+        layer_path = beside
+        notes.append(
+            f"The unblended layer wasn't at its recorded path {recorded}; used {beside} "
+            "next to the result instead."
+        )
+    if not original_path.is_file():  # never guessed: it must be exactly where it was
         raise InputError(
             f"The original input image {original_path} is missing; re-masking blends against it."
         )
@@ -139,7 +183,9 @@ def remask(
 
     blended, feather = composite_mask(layer, original.original, str(mask), mask_feather_px)
 
-    directory, note = choose_dir(out_dir or result.parent, settings.output_dir)
+    directory, dir_note = choose_dir(out_dir or result.parent, settings.output_dir)
+    if dir_note:
+        notes.append(dir_note)
     path = output_path(
         directory, stem=result.stem, model_id=MODEL_LABEL, index=1, ext=".png", now=now
     )
@@ -157,4 +203,4 @@ def remask(
         "mask": {"path": mask.as_posix(), "feather_px": feather},
         "cost_usd": 0,
     })
-    return RemaskResult(path, sidecar, make_preview(blended), note)
+    return RemaskResult(path, sidecar, make_preview(blended), notes)

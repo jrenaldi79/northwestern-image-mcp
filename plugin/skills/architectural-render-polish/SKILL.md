@@ -41,7 +41,7 @@ Before uploading anything, get the user's explicit OK to send this client or pro
 Pass `mask_path` (absolute): white = may change, black = keep pixel-identical. That holds only with PNG output (the default); a JPEG or WebP `output_format` re-compresses the black areas too.
 - **Signage and logos:** paint them black so the original pixels survive; models rarely reproduce text.
 - **People:** paint them black to keep them exactly as rendered, or leave them white if making them look real is the point. Ask the user which.
-- Watch for a lighting seam at the mask edge; enlarge the feather (`mask_feather_px`) or the white area if it shows. Masks need `fit="preserve"`.
+- Watch for a lighting seam at the mask edge; enlarge the feather (`mask_feather_px`) or the white area if it shows. Masks need `fit="preserve"`. After a masked `edit_image` you don't need a paid rerun for this: enlarge the mask (or the feather) and call `remask_image` on the result, which re-blends the model's saved image locally for free.
 - In Claude Code you can draw the mask with Pillow from rectangles around the protected areas; otherwise ask the user to paint one at the render's size.
 
 ## Where outputs go

@@ -118,6 +118,12 @@ def test_skills_require_consent_for_client_imagery(path):
     assert "explicit OK" in read(path)
 
 
+def test_render_polish_masks_point_to_remask_image():
+    text = read(SKILLS_DIR / "architectural-render-polish" / "SKILL.md")
+    section = text.split("## Protective masks", 1)[1].split("\n## ", 1)[0]
+    assert "`remask_image`" in section
+
+
 def test_masks_section_points_to_remask_image():
     text = read(SKILLS_DIR / "openrouter-image" / "SKILL.md")
     section = text.split("## Edits: paths, size and masks", 1)[1].split("\n## ", 1)[0]

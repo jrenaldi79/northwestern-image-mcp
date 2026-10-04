@@ -614,8 +614,8 @@ def build_server(settings: Settings, client: OpenRouterClient | None = None) -> 
             f"Saved: {done.path}  (sidecar: {done.sidecar})",
             "Cost: $0.00 (local re-blend, nothing uploaded)",
         ]
-        if done.note:
-            lines += ["Notes:", f"- {done.note}"]
+        if done.notes:
+            lines += ["Notes:", *(f"- {n}" for n in done.notes)]
         return [
             TextContent(type="text", text=redact("\n".join(lines))),
             ImageContent(

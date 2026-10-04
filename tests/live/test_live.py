@@ -7,6 +7,8 @@ use synthetic images only, and write only under pytest's tmp_path.
 
 from dataclasses import replace
 
+import keyring
+import keyring.backend
 import pytest
 from helpers import make_grid, save
 from PIL import Image
@@ -22,8 +24,55 @@ pytestmark = pytest.mark.live
 _NOT_SIGNED_IN = "run `openrouter-image-mcp login` first"
 
 
+_NON_OS_BACKENDS = frozenset(
+    {"keyring.backends.fail", "keyring.backends.null", "keyring.backends.chainer"}
+)
+
+
+def _viable_priority(backend) -> float | None:
+    """The backend's priority, or None if it is not viable (property raises or is <= 0)."""
+    try:
+        priority = backend.priority
+    except Exception:  # noqa: BLE001 - a broken backend just means "not viable"
+        return None
+    return priority if priority > 0 else None
+
+
+def _real_os_backend():
+    """Highest-priority real OS keyring backend, or None if there is none."""
+    best, best_priority = None, 0.0
+    for backend in keyring.backend.get_all_keyring():
+        module = type(backend).__module__
+        if not module.startswith("keyring.backends.") or module in _NON_OS_BACKENDS:
+            continue
+        priority = _viable_priority(backend)
+        if priority is not None and priority > best_priority:
+            best, best_priority = backend, priority
+    return best
+
+
 @pytest.fixture(autouse=True)
-def _require_key():
+def _real_os_keyring():
+    """Use the real OS keyring for each live test, then restore the previous backend.
+
+    Collection imports test modules that define KeyringBackend test doubles, and keyring
+    auto-registers every subclass, so the default chainer would include a Plaintext one and
+    keystore would (rightly) refuse it. Runs only for live tests, so a default run never
+    touches the real keyring.
+    """
+    backend = _real_os_backend()
+    if backend is None:
+        pytest.skip(_NOT_SIGNED_IN)
+    previous = keyring.get_keyring()
+    keyring.set_keyring(backend)
+    try:
+        yield
+    finally:
+        keyring.set_keyring(previous)
+
+
+@pytest.fixture(autouse=True)
+def _require_key(_real_os_keyring):
     """Skip (rather than fail) when nobody is signed in. Checked per test, not at import,
     so a default run never touches the real keyring."""
     try:

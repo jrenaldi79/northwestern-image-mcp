@@ -1,7 +1,7 @@
 import asyncio
 import re
 import socket
-import sys
+import time
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -90,20 +90,33 @@ async def wait_for(manager: LoginManager) -> LoginState:
 
 
 def port_closed(port: int) -> bool:
-    """True when nothing listens on the port (binding it succeeds).
+    """True when nothing accepts connections on 127.0.0.1:port.
 
-    After a real round trip the port sits in TIME_WAIT; on Linux/macOS a bind
-    then needs SO_REUSEADDR (which still fails against a live listener). On
-    Windows SO_REUSEADDR would let the bind succeed over a listener, so skip it.
+    Probes by connecting rather than binding: a refused connection means no
+    listener. Binding is unreliable on Linux after a real round trip (lingering
+    TIME_WAIT sockets), whereas TIME_WAIT sockets never accept connections.
+    The listener may close asynchronously, so retry for up to ~2 s before
+    deciding it is still open. A live listener gets a minimal GET /probe (404,
+    keeps listening) so the probe never stalls its request loop. Synchronous
+    (blocking sleeps) by design.
     """
-    with socket.socket() as s:
-        if sys.platform != "win32":
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    deadline = time.monotonic() + 2.0
+    while True:
         try:
-            s.bind(("127.0.0.1", port))
-        except OSError:
+            probe = socket.create_connection(("127.0.0.1", port), timeout=0.5)
+        except OSError:  # refused (or unreachable): nothing is listening
+            return True
+        with probe:
+            # A bare connect would occupy the single-threaded server until its
+            # socket timeout; a complete request gets a 404 and it keeps listening.
+            try:
+                probe.sendall(b"GET /probe HTTP/1.0\r\n\r\n")
+                probe.recv(1024)
+            except OSError:
+                pass
+        if time.monotonic() >= deadline:
             return False
-        return True
+        time.sleep(0.05)
 
 
 # ------------------------------------------------------------------- PKCE / URL

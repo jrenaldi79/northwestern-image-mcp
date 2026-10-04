@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "openrouter-image": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/skelly-77/openrouter-image-mcp@v0.1.0",
+        "openrouter-image-mcp"
+      ]
+    }
+  }
+}

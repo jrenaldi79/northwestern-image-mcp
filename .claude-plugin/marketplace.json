@@ -1,0 +1,13 @@
+{
+  "name": "skelly-77-tools",
+  "owner": {
+    "name": "skelly-77"
+  },
+  "plugins": [
+    {
+      "name": "openrouter-image",
+      "source": "./plugin",
+      "description": "Image generation and editing through any OpenRouter image model, with companion skills."
+    }
+  ]
+}

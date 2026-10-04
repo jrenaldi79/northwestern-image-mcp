@@ -1,0 +1,55 @@
+import contextlib
+import logging
+
+from openrouter_image_mcp import logs
+
+
+@contextlib.contextmanager
+def _configured_logging():
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    try:
+        logs.configure_logging()
+        yield logging.getLogger("t")
+    finally:
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+
+
+def test_redact():
+    assert logs.redact("Bearer sk-or-v1-abc_DEF-123 x") == "Bearer sk-or-*** x"
+
+
+def test_log_filter_redacts_args(capsys):
+    with _configured_logging() as log:
+        log.info("key=%s", "sk-or-v1-SECRET_value-9")
+        log.info("direct sk-or-v1-OTHER_value-1")
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "key=sk-or-***" in captured.err
+    assert "SECRET_value" not in captured.err
+    assert "OTHER_value" not in captured.err
+
+
+def test_log_redacts_non_str_args(capsys):
+    with _configured_logging() as log:
+        log.warning("failed: %s", RuntimeError("bad key sk-or-v1-EXC_secret-1"))
+        log.warning("%s", {"Authorization": "Bearer sk-or-v1-HDR_secret-2"})
+        log.warning("%(h)s", {"h": ValueError("sk-or-v1-MAP_secret-3")})
+    err = capsys.readouterr().err
+    assert "failed: bad key sk-or-***" in err
+    for leaked in ("EXC_secret", "HDR_secret", "MAP_secret"):
+        assert leaked not in err
+
+
+def test_log_redacts_exception_traceback(capsys):
+    with _configured_logging() as log:
+        try:
+            raise RuntimeError("auth failed with sk-or-v1-TRACE_secret-4")
+        except RuntimeError:
+            log.exception("request failed")
+    err = capsys.readouterr().err
+    assert "request failed" in err
+    assert "Traceback" in err
+    assert "RuntimeError: auth failed with sk-or-***" in err
+    assert "TRACE_secret" not in err

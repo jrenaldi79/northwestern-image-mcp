@@ -1,0 +1,10 @@
+{
+  "name": "openrouter-image",
+  "version": "0.1.0",
+  "description": "Generate and edit images with any OpenRouter image model, plus skills for model choice and architectural render polish.",
+  "author": {
+    "name": "skelly-77"
+  },
+  "repository": "https://github.com/skelly-77/openrouter-image-mcp",
+  "license": "MIT"
+}

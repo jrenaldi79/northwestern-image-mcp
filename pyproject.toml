@@ -1,0 +1,43 @@
+[project]
+name = "openrouter-image-mcp"
+dynamic = ["version"]
+description = "Local stdio MCP server for OpenRouter image generation"
+requires-python = ">=3.12"
+license = "MIT"
+readme = "README.md"
+dependencies = [
+    "mcp>=2.3.0",
+    "httpx>=0.28.1",
+    "pillow>=12.3.0",
+    "keyring>=25.7.0",
+]
+
+[project.scripts]
+openrouter-image-mcp = "openrouter_image_mcp.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "respx",
+    "ruff",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/openrouter_image_mcp/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openrouter_image_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = ["live: hits real OpenRouter, needs signed-in key"]
+addopts = "-m 'not live'"
+testpaths = ["tests"]
+
+[tool.ruff]
+extend-exclude = ["reference"]

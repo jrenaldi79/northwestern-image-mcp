@@ -38,7 +38,7 @@ CHAT = "openrouter/auto"  # chat route
 SIDECAR_KEYS = {
     "schema_version", "server_version", "tool", "created_at", "model", "provider",
     "prompt", "params", "seed", "generation_id", "elapsed_s", "usage", "cost_usd",
-    "call_cost_usd", "inputs", "mask", "fit",
+    "call_cost_usd", "inputs", "mask", "unmasked_path", "fit",
 }
 
 
@@ -197,6 +197,8 @@ async def test_edit_sample_render_shape(svc, images_route, sample_render):
     assert meta["call_cost_usd"] == pytest.approx(0.21)
     assert meta["usage"]["cost"] == pytest.approx(0.21)
     assert meta["mask"] is None
+    assert meta["unmasked_path"] is None
+    assert list(sample_render.parent.glob("*.unmasked.png")) == []
     assert meta["inputs"] == [
         {
             "path": sample_render.as_posix(),
@@ -286,6 +288,73 @@ async def test_mask_applied_after_fit(svc, images_route, tmp_path):
         assert out.getpixel((x, y)) == (0, 0, 255)
     meta = sidecar(result.images[0])
     assert meta["mask"] == {"path": mask_path.as_posix(), "feather_px": 0}
+
+
+async def test_masked_edit_keeps_unmasked_layer(svc, images_route, tmp_path):
+    src = save(make_grid(1920, 828), tmp_path / "in.png", "PNG")
+    mask = Image.new("L", (1920, 828), 0)
+    mask.paste(255, (960, 0, 1920, 828))  # right half: take the model's pixels
+    mask_path = save(mask, tmp_path / "mask.png", "PNG")
+    model_out = Image.new("RGB", (2016, 864), (0, 0, 255))
+    model_out.paste((255, 0, 0), (0, 0, 1008, 864))  # left half red, never shown in the result
+    buf = BytesIO()
+    model_out.save(buf, format="PNG")
+    images_route.mock(return_value=httpx.Response(200, json=images_body([buf.getvalue()])))
+
+    result = await svc.edit("x", SUNBURST, [str(src)], mask_path=str(mask_path), mask_feather_px=0)
+
+    saved = result.images[0]
+    layer_path = saved.path.with_suffix(".unmasked.png")
+    assert layer_path.name == f"in__gpt-image-2.5-sunburst_{TS}_1.unmasked.png"
+    assert layer_path.is_file()
+    with Image.open(layer_path) as opened:
+        assert opened.format == "PNG"
+        layer = opened.convert("RGB")
+    assert layer.size == (1920, 828)  # the input's size, not the model's
+    out = Image.open(saved.path).convert("RGB")
+    # Pixel-aligned with the result: inside the mask the two are identical...
+    # (sample points stay clear of the resampled red/blue boundary near x=960)
+    for x, y in [(1100, 0), (1500, 400), (1919, 827)]:
+        assert layer.getpixel((x, y)) == out.getpixel((x, y)) == (0, 0, 255)
+    right = (960, 0, 1920, 828)
+    assert layer.crop(right).tobytes() == out.crop(right).tobytes()
+    # ...and outside it the layer still has the model's pixels the blend discarded.
+    for x, y in [(0, 0), (100, 400), (800, 827)]:
+        assert layer.getpixel((x, y)) == (255, 0, 0)
+    meta = sidecar(saved)
+    assert set(meta) == SIDECAR_KEYS
+    assert meta["unmasked_path"] == layer_path.as_posix()
+
+
+async def test_unmasked_layer_is_png_whatever_the_output_format(svc, images_route, tmp_path):
+    src = save(make_grid(1920, 828), tmp_path / "in.png", "PNG")
+    mask_path = save(Image.new("L", (1920, 828), 255), tmp_path / "mask.png", "PNG")
+    images_route.mock(return_value=ok(2016, 864))
+
+    result = await svc.edit(
+        "x", FLUX_PRO, [str(src)], mask_path=str(mask_path), output_format="jpeg"
+    )
+
+    saved = result.images[0]
+    assert saved.path.suffix == ".jpg"
+    layer_path = saved.path.with_suffix(".unmasked.png")
+    assert Image.open(layer_path).format == "PNG"
+    assert sidecar(saved)["unmasked_path"] == layer_path.as_posix()
+
+
+async def test_masked_edit_never_reuses_a_name_with_an_unmasked_layer(svc, images_route, tmp_path):
+    src = save(make_grid(1920, 828), tmp_path / "in.png", "PNG")
+    mask_path = save(Image.new("L", (1920, 828), 255), tmp_path / "mask.png", "PNG")
+    stale = tmp_path / f"in__gpt-image-2.5-sunburst_{TS}_1.unmasked.png"
+    stale.write_bytes(b"left over from an earlier run")
+    images_route.mock(return_value=ok(2016, 864))
+
+    result = await svc.edit("x", SUNBURST, [str(src)], mask_path=str(mask_path))
+
+    saved = result.images[0]
+    assert saved.path.name == f"in__gpt-image-2.5-sunburst_{TS}_1-2.png"
+    assert stale.read_bytes() == b"left over from an earlier run"
+    assert saved.path.with_suffix(".unmasked.png").is_file()
 
 
 async def test_mask_with_fit_model_rejected_before_network(svc, mock, images_route, sample_render, tmp_path):
@@ -388,6 +457,8 @@ async def test_generate_saves_to_output_dir_with_slug(svc, images_route, setting
     assert set(meta) == SIDECAR_KEYS
     assert meta["tool"] == "generate_image"
     assert meta["inputs"] == [] and meta["fit"] is None and meta["mask"] is None
+    assert meta["unmasked_path"] is None
+    assert list(settings.output_dir.glob("*.unmasked.png")) == []
     assert meta["params"]["quality"] == "high"
 
 

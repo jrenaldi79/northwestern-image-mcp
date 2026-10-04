@@ -18,6 +18,7 @@ from PIL import Image
 from openrouter_image_mcp import __version__
 
 SCHEMA_VERSION = 1
+UNMASKED_SUFFIX = ".unmasked.png"
 QUALITY = 95
 _ALPHA_MODES = frozenset({"RGBA", "LA", "PA", "RGBa", "La"})
 _UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
@@ -71,8 +72,17 @@ def _safe_component(text: str) -> str:
     return _UNSAFE_CHARS.sub("-", text)
 
 
+def unmasked_path(image_path: Path) -> Path:
+    """Where a masked edit keeps its unblended layer: `<name>.unmasked.png`."""
+    return image_path.with_suffix(UNMASKED_SUFFIX)
+
+
 def _taken(path: Path) -> bool:
-    return path.exists() or path.with_suffix(".json").exists()
+    return (
+        path.exists()
+        or path.with_suffix(".json").exists()
+        or unmasked_path(path).exists()
+    )
 
 
 def output_path(
@@ -80,7 +90,8 @@ def output_path(
 ) -> Path:
     """Pick a free `{stem}__{model}_{timestamp}_{index}{ext}` path (does not create it).
 
-    A name is taken if either the image or its `.json` sidecar already exists.
+    A name is taken if the image, its `.json` sidecar or its `.unmasked.png` layer
+    already exists.
     """
     model = _safe_component(model_short(model_id))
     base = f"{_safe_component(stem)}__{model}_{now.strftime('%Y%m%d-%H%M%S')}_{index}"

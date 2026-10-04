@@ -48,6 +48,7 @@ from .outputs import (
     encode_image,
     output_path,
     prompt_slug,
+    unmasked_path,
     write_bytes_atomic,
     write_sidecar,
 )
@@ -501,6 +502,7 @@ class ImageService:
     ) -> SavedImage:
         fit: dict | None = None
         mask_meta: dict | None = None
+        unmasked: bytes | None = None  # the fitted, pre-blend image (masked edits only)
         notes: list[str] = []
         preview: bytes | None = None
         if _is_svg(img):
@@ -539,6 +541,9 @@ class ImageService:
                         f"to {report.final_size[0]}×{report.final_size[1]}"
                     )
                 if job.mask is not None:
+                    # Keep the model's fitted image before the blend, lossless and at the
+                    # input's exact size, so `remask_image` can re-blend it for free.
+                    unmasked, _ = encode_image(final, None)
                     final, feather = composite_mask(
                         final, job.inputs[0].original, str(job.mask), job.mask_feather_px
                     )
@@ -550,6 +555,9 @@ class ImageService:
                 job.previews += 1
 
         path = output_path(job.directory, job.stem, job.model.id, index, ext, now)
+        layer = unmasked_path(path) if unmasked is not None else None
+        if layer is not None:
+            write_bytes_atomic(layer, unmasked)
         write_bytes_atomic(path, data)
         stamp = now if now.tzinfo is not None else now.astimezone()
         sidecar = write_sidecar(path, {
@@ -570,6 +578,7 @@ class ImageService:
                 for p in job.inputs
             ],
             "mask": mask_meta,
+            "unmasked_path": layer.as_posix() if layer is not None else None,
             "fit": fit,
         })
         return SavedImage(path, sidecar, preview, cost, "; ".join(notes) or None)

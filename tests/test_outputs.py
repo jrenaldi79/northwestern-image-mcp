@@ -179,3 +179,10 @@ def test_output_path_skips_name_whose_sidecar_exists(tmp_path):
     assert output_path(tmp_path, STEM, MODEL, 1, ".png", NOW).name == NAME + "-2.png"
     (tmp_path / (NAME + "-2.png")).write_bytes(b"x")
     assert output_path(tmp_path, STEM, MODEL, 1, ".png", NOW).name == NAME + "-3.png"
+
+
+def test_output_path_skips_name_whose_unmasked_layer_exists(tmp_path):
+    (tmp_path / (NAME + ".unmasked.png")).write_bytes(b"x")
+    assert output_path(tmp_path, STEM, MODEL, 1, ".png", NOW).name == NAME + "-2.png"
+    (tmp_path / (NAME + "-2.unmasked.png")).write_bytes(b"x")
+    assert output_path(tmp_path, STEM, MODEL, 1, ".jpg", NOW).name == NAME + "-3.jpg"

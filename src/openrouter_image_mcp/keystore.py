@@ -33,22 +33,22 @@ def _check_backend() -> None:
         )
 
 
-def get_key() -> str | None:
+def get_key(*, workspace_id: str = KEYRING_USER) -> str | None:
     _check_backend()
-    return keyring.get_password(KEYRING_SERVICE, KEYRING_USER)
+    return keyring.get_password(KEYRING_SERVICE, workspace_id)
 
 
-def set_key(key: str) -> None:
+def set_key(key: str, *, workspace_id: str = KEYRING_USER) -> None:
     _check_backend()
     # Remove the old entry first: some backends (e.g. a Windows fallback entry) would
     # otherwise keep returning a switched-away key.
-    delete_key()
-    keyring.set_password(KEYRING_SERVICE, KEYRING_USER, key)
+    delete_key(workspace_id=workspace_id)
+    keyring.set_password(KEYRING_SERVICE, workspace_id, key)
 
 
-def delete_key() -> None:
+def delete_key(*, workspace_id: str = KEYRING_USER) -> None:
     _check_backend()
     try:
-        keyring.delete_password(KEYRING_SERVICE, KEYRING_USER)
+        keyring.delete_password(KEYRING_SERVICE, workspace_id)
     except keyring.errors.PasswordDeleteError:
         pass

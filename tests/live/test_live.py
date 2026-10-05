@@ -76,7 +76,10 @@ def _require_key(_real_os_keyring):
     """Skip (rather than fail) when nobody is signed in. Checked per test, not at import,
     so a default run never touches the real keyring."""
     try:
-        key = keystore.get_key()
+        settings = load_settings()
+        key = keystore.get_key(workspace_id=settings.workspace_id)
+    except ValueError as exc:
+        pytest.skip(str(exc))
     except keystore.InsecureKeyringError:
         pytest.skip(_NOT_SIGNED_IN)
     if key is None:
@@ -90,7 +93,9 @@ def settings(tmp_path):
 
 @pytest.fixture
 async def client(settings):
-    async with OpenRouterClient(timeout_s=settings.timeout_s) as c:
+    async with OpenRouterClient(
+        timeout_s=settings.timeout_s, workspace_id=settings.workspace_id
+    ) as c:
         yield c
 
 

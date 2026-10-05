@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 
 from openrouter_image_mcp import __version__
-from openrouter_image_mcp.cli import DEFAULT_REF, render_config
+from openrouter_image_mcp.cli import render_plugin_config
 
 ROOT = Path(__file__).resolve().parent.parent
 SKILLS = ROOT / "skills"
@@ -48,7 +48,7 @@ def test_plugin_skills_in_sync():
 
 def test_plugin_mcp_json():
     actual = json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8"))
-    expected = json.loads(render_config("code", "uvx", Path.home()))
+    expected = json.loads(render_plugin_config())
     assert actual == expected
 
 
@@ -64,14 +64,13 @@ def test_versions_match():
         (PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
     )
     assert manifest["version"] == __version__
-    assert DEFAULT_REF == f"v{__version__}"
 
 
-def test_readme_install_refs_match_release():
+def test_readme_uses_local_config_and_holds_deployment():
     text = README.read_text(encoding="utf-8")
-    refs = re.findall(r"openrouter-image-mcp(?:@|/archive/refs/tags/)(v[0-9][0-9.]*[0-9])", text)
-    assert refs, "README has no install refs"
-    assert set(refs) == {DEFAULT_REF}
+    assert "print-config" in text
+    assert "deployment" in text.lower()
+    assert "git+https" not in text
 
 
 def test_readme_lists_every_tool():

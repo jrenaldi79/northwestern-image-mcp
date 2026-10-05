@@ -17,6 +17,7 @@ import pytest
 import respx
 from helpers import make_grid, save, unc_paths
 from mcp import Client
+from mcp.client import advertise
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ImageContent, TextContent
 from PIL import Image
@@ -97,7 +98,7 @@ def table_rows(text: str) -> list[list[str]]:
 @pytest.fixture
 def settings(tmp_path):
     return Settings(
-        workspace_id="",
+        workspace_id="21082e84-ae02-4639-ad40-c7251b98ab10",
         output_dir=tmp_path / "out",
         max_input_edge=2048,
         timeout_s=30,
@@ -142,7 +143,7 @@ def server(settings, http, mock):
 
 
 @pytest.fixture
-async def session(server):
+async def session(server, request):
     """A legacy-mode (JSON-RPC over memory streams) client session.
 
     The client's task group lives in its own task: pytest-asyncio runs fixture
@@ -152,7 +153,11 @@ async def session(server):
     holder = {}
 
     async def hold():
-        async with Client(server, mode="legacy") as c:
+        extensions = (
+            [advertise("io.modelcontextprotocol/ui", {"mimeTypes": ["text/html;profile=mcp-app"]})]
+            if getattr(request, "param", False) else None
+        )
+        async with Client(server, mode="legacy", extensions=extensions) as c:
             holder["client"] = c
             ready.set()
             await done.wait()
@@ -186,6 +191,86 @@ async def test_tool_names(session):
     tools = (await session.list_tools()).tools
     assert {t.name for t in tools} == TOOLS
     assert len(tools) == 8
+
+
+@pytest.mark.parametrize("session", [True], indirect=True)
+async def test_image_apps_discovery(session):
+    uri = "ui://northwestern-images/preview.html"
+    tools = {t.name: t for t in (await session.list_tools()).tools}
+    for name in ("generate_image", "edit_image", "remask_image"):
+        assert tools[name].meta == {"ui": {"resourceUri": uri}}
+    for name in TOOLS - {"generate_image", "edit_image", "remask_image"}:
+        assert not tools[name].meta
+    resources = (await session.list_resources()).resources
+    assert [str(r.uri) for r in resources] == [uri]
+    page = (await session.read_resource(uri)).contents[0]
+    assert page.mime_type == "text/html;profile=mcp-app"
+    assert page.text.lower().startswith("<!doctype html>")
+    assert "<script" in page.text
+    assert not re.search(r"<script[^>]+src=", page.text)
+    assert page.meta["ui"]["csp"] == {"connectDomains": [], "resourceDomains": []}
+
+
+async def test_image_apps_fallback_client(session, keyed, images_route):
+    tools = (await session.list_tools()).tools
+    assert all(not t.meta or "ui" not in t.meta for t in tools)
+    images_route.mock(return_value=images_ok(64, 64))
+    result = await session.call_tool("generate_image", {"prompt": "test", "model": SUNBURST})
+    assert result.structured_content is None
+    assert any(isinstance(c, ImageContent) for c in result.content)
+    assert "Saved:" in text_of(result)
+
+
+@pytest.mark.parametrize("session", [True], indirect=True)
+@pytest.mark.parametrize("tool", ["generate_image", "edit_image"])
+async def test_image_apps_jpeg_result(session, keyed, images_route, sample_render, tool):
+    images_route.mock(return_value=images_ok(64, 64))
+    arguments = {"prompt": "test", "model": SUNBURST}
+    if tool == "edit_image":
+        arguments["images"] = [str(sample_render)]
+    result = await session.call_tool(tool, arguments)
+    assert result.is_error is False
+    data = result.structured_content
+    assert data["model"] == SUNBURST
+    assert data["provider"] == "openai"
+    assert data["callCostUsd"] == pytest.approx(0.21)
+    assert data["usageLine"] in text_of(result)
+    assert data["notes"] == data["failures"] == []
+    image = data["images"][0]
+    saved = Path(image["path"])
+    assert saved.is_file() and image["filename"] == saved.name
+    preview = next(c for c in result.content if isinstance(c, ImageContent))
+    assert image["dataUri"] == "data:image/jpeg;base64," + preview.data
+    assert "ui://" not in text_of(result)
+
+
+async def test_image_apps_negotiation_does_not_mutate_shared_tools(server):
+    for extensions, expected in (
+        (None, False),
+        ([advertise("io.modelcontextprotocol/ui", {"mimeTypes": ["text/html;profile=mcp-app"]})], True),
+        ([advertise("io.modelcontextprotocol/ui", {"mimeTypes": ["text/plain"]})], False),
+        ([advertise("io.modelcontextprotocol/ui", {"mimeTypes": ["text/html;profile=mcp-app"]})], True),
+    ):
+        async with Client(server, mode="legacy", extensions=extensions) as client:
+            tool = next(t for t in (await client.list_tools()).tools if t.name == "generate_image")
+            assert bool(tool.meta and "ui" in tool.meta) is expected
+
+
+def test_image_apps_unknown_cost_missing_preview_and_redaction(tmp_path):
+    from openrouter_image_mcp.service import SavedImage, ServiceResult
+
+    path = tmp_path / f"{SECRET}.svg"
+    result = server_mod._image_result(ServiceResult(
+        images=[SavedImage(path, path.with_suffix(".json"), None, None, None)],
+        model=SECRET, provider=None, call_cost_usd=None, usage_line="Cost unavailable",
+        elapsed_s=0, notes=[SECRET], failures=[SECRET],
+    ))
+    data = result.structured_content
+    assert data["callCostUsd"] is None
+    assert data["images"][0]["dataUri"] is None
+    assert data["images"][0]["filename"].endswith(".svg")
+    assert SECRET not in json.dumps(data)
+    assert [type(c) for c in result.content] == [TextContent]
 
 
 async def test_tool_parameters_match_spec(session):
@@ -252,6 +337,7 @@ async def test_edit_image_returns_text_and_images(keyed, session, images_route, 
     assert f"Model: {SUNBURST} · Provider: openai · " in text
 
 
+@pytest.mark.parametrize("session", [True], indirect=True)
 async def test_summary_order_notes_failures(keyed, session, images_route, monkeypatch):
     monkeypatch.setattr("openrouter_image_mcp.client._SERVER_ERROR_DELAY", 0)
     flux_pro = "black-forest-labs/flux.2-pro"  # max_n 1 -> one call per image, with a note
@@ -279,8 +365,13 @@ async def test_summary_order_notes_failures(keyed, session, images_route, monkey
     assert re.fullmatch(rf"Model: {re.escape(flux_pro)} · Provider: openai · \d+s", lines[i_model])
     assert lines[i_model + 1].startswith("This call: $")
     assert len([c for c in result.content if isinstance(c, ImageContent)]) == 1
+    data = result.structured_content
+    assert len(data["images"]) == 1
+    assert "HTTP 500" in data["failures"][0]
+    assert data["notes"][0] == "model max n is 1; will make 2 calls"
 
 
+@pytest.mark.parametrize("session", [True], indirect=True)
 async def test_generate_without_preview_has_only_text(keyed, session, images_route):
     svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"></svg>'
     images_route.mock(
@@ -301,6 +392,8 @@ async def test_generate_without_preview_has_only_text(keyed, session, images_rou
 
     assert result.is_error is False
     assert [type(c) for c in result.content] == [TextContent]
+    assert result.structured_content["images"][0]["dataUri"] is None
+    assert result.structured_content["images"][0]["filename"].endswith(".svg")
 
 
 async def test_progress_is_forwarded(keyed, session, images_route, sample_render):
@@ -343,6 +436,7 @@ def _halves_mask(path, w=1920, h=828, left=True):
     return save(mask, path, "PNG")
 
 
+@pytest.mark.parametrize("session", [True], indirect=True)
 async def test_remask_image_round_trip(keyed, session, mock, images_route, sample_render, tmp_path):
     images_route.mock(return_value=images_ok())
     first_mask = _halves_mask(tmp_path / "mask-right.png", left=False)
@@ -372,6 +466,11 @@ async def test_remask_image_round_trip(keyed, session, mock, images_route, sampl
     imgs = [c for c in result.content if isinstance(c, ImageContent)]
     assert len(imgs) == 1 and imgs[0].mime_type == "image/jpeg"
     assert Image.open(BytesIO(base64.b64decode(imgs[0].data))).format == "JPEG"
+    data = result.structured_content
+    assert data["callCostUsd"] == 0
+    assert data["model"] == "Local re-blend"
+    assert data["images"][0]["path"] == str(saved)
+    assert data["images"][0]["dataUri"] == "data:image/jpeg;base64," + imgs[0].data
     out = Image.open(saved).convert("RGB")
     layer = Image.open(source.with_suffix(".unmasked.png")).convert("RGB")
     original = Image.open(sample_render).convert("RGB")
@@ -619,7 +718,7 @@ async def test_auth_login_pending_then_status(memory_keyring, session, monkeypat
 async def test_auth_logout_message_links_dashboard(keyed, session):
     result = await session.call_tool("auth_logout", {})
     assert result.is_error is False
-    assert text_of(result) == (
+    assert text_of(result).endswith(
         "Signed out of OpenRouter on this computer. To revoke the key itself, "
         "delete it at https://openrouter.ai/settings/keys"
     )
@@ -664,6 +763,8 @@ def test_run_uses_stdio_and_prints_nothing(monkeypatch, capsys):
         MCPServer, "run", lambda self, transport="stdio", **kw: calls.append((self.name, transport))
     )
 
+    monkeypatch.setenv("OPENROUTER_IMAGE_COHORT", "2027")
+    monkeypatch.delenv("OPENROUTER_IMAGE_WORKSPACE_ID", raising=False)
     server_mod.run()
 
     assert calls == ["logging", ("openrouter-image", "stdio")]
@@ -712,7 +813,7 @@ async def test_keyring_error_is_tool_error(memory_keyring, session):
     keyring.set_keyring(BrokenKeyring())  # memory_keyring fixture restores afterwards
     for name in ("account_status", "auth_logout"):
         message = error_text(await session.call_tool(name, {}))
-        assert message == "Couldn't access the OS credential store: locked"
+        assert message.splitlines()[-1] == "Couldn't access the OS credential store: locked"
 
 
 async def test_output_dir_error_is_tool_error(keyed, session, images_route, monkeypatch):
@@ -740,4 +841,4 @@ async def test_account_status_usage_unavailable(keyed, session, mock):
     mock.get(f"{BASE}/key").respond(403, json={"error": {"message": "key info disabled"}})
     result = await session.call_tool("account_status", {})
     assert result.is_error is False
-    assert text_of(result) == "Signed in to OpenRouter (couldn't fetch usage: key info disabled)"
+    assert text_of(result).splitlines()[-1] == "Signed in to OpenRouter (couldn't fetch usage: key info disabled)"

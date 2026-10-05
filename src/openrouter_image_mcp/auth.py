@@ -99,8 +99,8 @@ def build_auth_url(port: int, challenge: str, state: str, workspace_id: str, lab
     return f"{AUTH_URL}?{urlencode(params, quote_via=quote)}"
 
 
-def default_key_label() -> str:
-    return f"{APP_TITLE} ({socket.gethostname()})"
+def default_key_label(cohort: str) -> str:
+    return f"{APP_TITLE} Class of {cohort} ({socket.gethostname()})"
 
 
 # --------------------------------------------------------------------- listener
@@ -240,7 +240,7 @@ class LoginManager:
     async def start(self, switch_account: bool = False) -> dict:
         if self._state is LoginState.PENDING:
             return self._start_result()
-        has_key = keystore.get_key() is not None  # also refuses an insecure keyring early
+        has_key = keystore.get_key(workspace_id=self._settings.workspace_id) is not None  # also refuses an insecure keyring early
         if has_key and not switch_account:
             # Drop a stale FAILED/EXPIRED (e.g. from an abandoned switch) so
             # status() falls back to the keystore.
@@ -267,7 +267,7 @@ class LoginManager:
                 "firewall or security software allows local connections, then try again."
             ) from exc
         url = build_auth_url(
-            server.port, challenge, state, self._settings.workspace_id, default_key_label()
+            server.port, challenge, state, self._settings.workspace_id, default_key_label(self._settings.cohort)
         )
         thread = threading.Thread(target=server.run, name="openrouter-login", daemon=True)
         attempt = _Attempt(verifier=verifier, url=url, server=server, thread=thread)
@@ -323,7 +323,7 @@ class LoginManager:
     def _current_state(self) -> LoginState:
         if self._state in (LoginState.PENDING, LoginState.FAILED, LoginState.EXPIRED):
             return self._state
-        return LoginState.SIGNED_IN if keystore.get_key() is not None else LoginState.IDLE
+        return LoginState.SIGNED_IN if keystore.get_key(workspace_id=self._settings.workspace_id) is not None else LoginState.IDLE
 
     def _message(self, state: LoginState) -> str:
         if state is LoginState.PENDING:
@@ -393,7 +393,7 @@ class LoginManager:
             return
 
         try:
-            keystore.set_key(key)
+            keystore.set_key(key, workspace_id=self._settings.workspace_id)
         except (keystore.InsecureKeyringError, keyring.errors.KeyringError) as exc:
             self._finish(attempt, LoginState.FAILED, f"couldn't store the key ({exc})")
             return

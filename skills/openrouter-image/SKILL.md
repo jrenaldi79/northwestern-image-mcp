@@ -3,7 +3,7 @@ name: openrouter-image
 description: Use when the user wants to make, generate, edit, restyle, inpaint, extend (outpaint) or vary an image with the `generate_image` or `edit_image` tools of the openrouter-image MCP server, when choosing an OpenRouter image model, or when an image call fails with a sign-in, credits, size or moderation error.
 ---
 
-# OpenRouter image generation and editing
+# Northwestern AI image generation and editing
 
 ## Overview
 
@@ -13,7 +13,7 @@ The openrouter-image MCP server sends prompts and images to any OpenRouter image
 
 | Tool | Use it for |
 |---|---|
-| `account_status()` | Signed in? The key's label, its usage (today, this week, this month, total) and its spending limit. It doesn't show the workspace. |
+| `account_status()` | Signed in? The key's label, its usage (today, this week, this month, total) and its spending limit. Shows the configured Northwestern cohort/workspace; these are configuration, not independent billing verification. |
 | `auth_login(switch_account=false)` | Sign in. Returns at once; the user finishes in the browser. Then check `account_status()`. |
 | `auth_logout()` | Delete the stored key. |
 | `list_image_models(query?, accepts_images?, author?, sort="newest"\|"price")` | Find candidate models. `accepts_images=true` for edits. |
@@ -22,14 +22,20 @@ The openrouter-image MCP server sends prompts and images to any OpenRouter image
 | `edit_image(prompt, model, images, ...)` | Image(s) plus prompt to image. The first image is the primary; the rest are references. |
 | `remask_image(image, mask_path, ...)` | Redo a masked edit's blend with a new mask, locally and free. |
 
+## Northwestern cohort selection
+
+Use the single northwestern-images server. Its configured cohort is 2027 for capstone, full-time and second-year students, or 2028 for first-year students. Start with account status and confirm the configured Northwestern workspace. Never choose a cohort from an email suffix alone. Each user completes browser sign-in after receiving organization/workspace membership. If membership is missing, ask the administrator to resolve it rather than using a personal key. Logout and switch-account affect only this cohort. Default generation folders are ~/Pictures/Northwestern AI/Class of 2027 or Class of 2028.
+
+Claude supplies image descriptions and critiques through its native vision. Do not automatically upload an image for analysis. Student deployment is on hold until the administrator confirms the OpenRouter capacity increase.
+
 ## Before uploading client or project imagery
 
-Ask the user for an explicit OK before the first `edit_image` call that sends a client or project image (render, photo, drawing, site image) and before any reference image from a new project. Say plainly: the image goes through OpenRouter to the model's provider (for example OpenAI or Google), and the org admin can see the prompts and outputs. An OK for one project doesn't cover another. If the user says no, stop; don't work around it with a description of the image.
+Ask the user for an explicit OK before the first `edit_image` call that sends a client or project image (render, photo, drawing, site image) and before any reference image from a new project, or images belonging to classmates, research participants or other people. Say plainly: the image goes through OpenRouter to the model's provider (for example OpenAI or Google), and it is subject to the organization's account policies. An OK for one project doesn't cover another. If the user says no, stop; don't work around it with a description of the image.
 
 ## Workflow
 
 1. **Discover first.** Don't pick a model from memory. Call `list_image_models` (with `accepts_images=true` for edits), then `get_image_model` on the one or two candidates to read their real parameters.
-2. **Iterate cheaply.** Use a speed-tier model, or `quality="low"` where the model has `quality`, and `n=2` to `n=4` while the prompt is still changing.
+2. **Iterate cheaply.** Use a speed-tier model, or `quality="low"` where the model has `quality`, and start with `n=1` while the prompt is still changing. Increase the batch only when the student requests it and understands the cost.
 3. **State the cost before spending.** Before a large `n` or a high/max-quality final, tell the user the likely cost: the "This call" figure from a comparable earlier result times `n`, or, if the cost is unknown, say so and run `n=1` first. `n` can be 1 to 10; above the model's maximum the server splits it into several calls, each billed.
 4. **Final at full quality**, `n=1` unless the user wants options.
 

@@ -10,14 +10,14 @@ from pathlib import Path
 API_BASE = "https://openrouter.ai/api/v1"
 AUTH_URL = "https://openrouter.ai/auth"
 APP_URL = "https://github.com/skelly-77/openrouter-image-mcp"
-APP_TITLE = "openrouter-image-mcp"
-KEYRING_SERVICE = "openrouter-image-mcp"
-KEYRING_USER = "default"
-
-# The "Image Tools" workspace of the firm's OpenRouter organization. Not a secret:
-# only members of the organization can use it. Setting OPENROUTER_IMAGE_WORKSPACE_ID
-# to an empty string means "personal workspace" (the workspace param is omitted).
-DEFAULT_WORKSPACE_ID = "42861d2b-4736-477d-aaeb-0f300c31596f"
+APP_TITLE = "Northwestern AI Images"
+KEYRING_SERVICE = "northwestern-openrouter-image-mcp"
+COHORT_WORKSPACES = {
+    "2027": "21082e84-ae02-4639-ad40-c7251b98ab10",
+    "2028": "8804f9c5-afd2-4de3-8d9f-f74b3d58c651",
+}
+# Compatibility default for internal client helpers; runtime selection is explicit.
+KEYRING_USER = COHORT_WORKSPACES["2027"]
 
 _ENV_WORKSPACE_ID = "OPENROUTER_IMAGE_WORKSPACE_ID"
 _ENV_OUTPUT_DIR = "OPENROUTER_IMAGE_OUTPUT_DIR"
@@ -34,6 +34,27 @@ class Settings:
     timeout_s: float
     ratio_tolerance: float
 
+    def __post_init__(self) -> None:
+        if self.workspace_id not in COHORT_WORKSPACES.values():
+            raise ValueError(
+                "Settings workspace must belong to a configured Northwestern cohort."
+            )
+
+    @property
+    def cohort(self) -> str:
+        return next(
+            year
+            for year, workspace in COHORT_WORKSPACES.items()
+            if workspace == self.workspace_id
+        )
+
+    @property
+    def target(self) -> str:
+        return (
+            f"Configured target: Northwestern University / Class of {self.cohort}"
+            f"\nWorkspace: {self.workspace_id}"
+        )
+
 
 def _parse(env: Mapping[str, str], name: str, cast, default):
     raw = env.get(name)
@@ -46,13 +67,37 @@ def _parse(env: Mapping[str, str], name: str, cast, default):
 
 
 def load_settings(env: Mapping[str, str] = os.environ) -> Settings:
+    cohort = env.get("OPENROUTER_IMAGE_COHORT")
+    workspace = env.get(_ENV_WORKSPACE_ID)
+    if cohort is not None and cohort not in COHORT_WORKSPACES:
+        raise ValueError("OPENROUTER_IMAGE_COHORT must be 2027 or 2028.")
+    if workspace is not None and workspace not in COHORT_WORKSPACES.values():
+        raise ValueError(
+            "OPENROUTER_IMAGE_WORKSPACE_ID must be a known Northwestern workspace."
+        )
+    if cohort is None and workspace is None:
+        raise ValueError(
+            "Select a cohort: set OPENROUTER_IMAGE_COHORT to 2027 or 2028."
+        )
+    if (
+        cohort is not None
+        and workspace is not None
+        and COHORT_WORKSPACES[cohort] != workspace
+    ):
+        raise ValueError(
+            "OPENROUTER_IMAGE_COHORT conflicts with OPENROUTER_IMAGE_WORKSPACE_ID."
+        )
+    if cohort is None:
+        cohort = next(
+            year for year, value in COHORT_WORKSPACES.items() if value == workspace
+        )
     output_dir = env.get(_ENV_OUTPUT_DIR) or None  # empty means unset
     return Settings(
-        workspace_id=env.get(_ENV_WORKSPACE_ID, DEFAULT_WORKSPACE_ID),
+        workspace_id=COHORT_WORKSPACES[cohort],
         output_dir=(
             Path(output_dir).expanduser()
             if output_dir is not None
-            else Path.home() / "Pictures" / "OpenRouter Images"
+            else Path.home() / "Pictures" / "Northwestern AI" / f"Class of {cohort}"
         ),
         max_input_edge=_parse(env, _ENV_MAX_INPUT_EDGE, int, 2048),
         timeout_s=_parse(env, _ENV_TIMEOUT_S, float, 600.0),

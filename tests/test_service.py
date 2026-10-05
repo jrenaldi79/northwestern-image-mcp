@@ -128,7 +128,7 @@ async def client(keyed):
 @pytest.fixture
 def settings(tmp_path):
     return Settings(
-        workspace_id="",
+        workspace_id="21082e84-ae02-4639-ad40-c7251b98ab10",
         output_dir=tmp_path / "out",
         max_input_edge=2048,
         timeout_s=30,

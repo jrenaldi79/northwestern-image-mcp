@@ -1,150 +1,121 @@
-# openrouter-image-mcp
+# Northwestern AI image MCP
 
-A local MCP server that lets Claude generate and edit images with any model on [OpenRouter](https://openrouter.ai). Models are discovered live, nothing is hard-coded, and results are saved with a metadata sidecar and the cost shown: edits next to the input image, new images in `~/Pictures/OpenRouter Images` by default.
+Local image generation and editing for Northwestern University AI classes. Each student signs in individually to the Northwestern OpenRouter organization. Claude supplies image analysis; this server retains its eight image and account tools.
 
-It runs on your machine over stdio and is installed with `uvx` straight from this repo. You sign in once in the browser; you never see or paste an API key.
+**Instructor testing only. Student deployment is on hold until OpenRouter increases organization capacity.**
+
+Repository: [jrenaldi79/northwestern-image-mcp](https://github.com/jrenaldi79/northwestern-image-mcp)
+(private). Adapted from [skelly-77/openrouter-image-mcp](https://github.com/skelly-77/openrouter-image-mcp),
+with the original MIT license and commit history retained.
+
+## Cohorts
+
+| Cohort | Students | Required OpenRouter workspace |
+| --- | --- | --- |
+| 2027 | Capstone, full-time and second-year | Class of 2027 (`21082e84-ae02-4639-ad40-c7251b98ab10`) |
+| 2028 | First-year | Class of 2028 (`8804f9c5-afd2-4de3-8d9f-f74b3d58c651`) |
+
+Set `OPENROUTER_IMAGE_COHORT=2027` or `2028`. Missing, empty, unknown or conflicting selection fails before sign-in. `OPENROUTER_IMAGE_WORKSPACE_ID` can alternatively select either ID above. There is no personal-account or original-firm fallback.
+
+## Local Claude Desktop setup
+
+Use this checkout and Python 3.12 or newer. Prepare an environment with uv:
+
+```powershell
+uv venv --python 3.13 .venv
+uv pip install --python .venv\Scripts\python.exe --group dev -e .
+.venv\Scripts\python.exe -m openrouter_image_mcp.cli print-config --cohort 2027
+```
+
+On macOS/Linux use `.venv/bin/python` instead. `print-config` produces one `northwestern-images` entry using this interpreter and checkout. Use `--cohort 2028` for a first-year student. Use **Settings → This computer → Developer → Edit config** to locate the active file; the usual Windows location is `%APPDATA%\Claude\claude_desktop_config.json`.
+
+**Fully exit Claude Desktop through File → Exit before editing.** Closing its window can leave it running. Back up the configuration and merge these `mcpServers` entries, preserving other settings and servers. Reopen Claude Desktop and confirm the single Northwestern entry shows **Running** in Developer settings. Manually configured local servers are managed there, separately from remote connector setup in Customize. Keep the checkout and environment in place.
+
+Maintain one server and one installation entry. Each student receives the same server configured with their confirmed cohort; the two class workspaces remain in OpenRouter. Student release instructions will follow instructor testing and the capacity increase. The original upstream release does not contain these changes.
+
+## Instructor test
+
+1. Select the 2027 tools in Claude Desktop and ask for `account_status`. Confirm the configured workspace above.
+2. Ask for `auth_login` on that server and finish browser consent with your Northwestern organization account. Organization/workspace membership must be granted separately; this server does not enroll users.
+3. Ask for `account_status` again and inspect the created key in the corresponding OpenRouter workspace. The target is configuration; a key label alone does not independently prove billing ownership.
+4. To test 2028 later, fully exit Claude, rerun the installer with --cohort 2028, and reopen it. This replaces the same entry. Saved credentials remain isolated by workspace.
+5. List image models and inspect pricing. Before a paid test, agree on one image (`n=1`), the model and likely cost. Startup and tool discovery do not require paid generation.
+
+Terminal testing selects a cohort first:
+
+```powershell
+$env:OPENROUTER_IMAGE_COHORT = "2027"
+.venv\Scripts\python.exe -m openrouter_image_mcp.cli status
+.venv\Scripts\python.exe -m openrouter_image_mcp.cli login
+.venv\Scripts\python.exe -m openrouter_image_mcp.cli logout
+```
+
+Change the cohort to `2028` for that profile. If `OPENROUTER_IMAGE_WORKSPACE_ID` is also set, it must match. `login --switch` replaces only this cohort's credential. Keys use the OS credential store under `northwestern-openrouter-image-mcp`, indexed by workspace ID. Legacy credentials are neither copied nor reused. Logout removes the local key; revoke it separately in OpenRouter if needed.
 
 ## Tools
 
 | Tool | What it does |
-|---|---|
-| `account_status` | Shows whether you are signed in, the key's label, its usage (today, this week, this month, total) and its spending limit. It does not show the workspace. |
-| `auth_login` | Starts browser sign-in. Returns at once; you finish in the browser. |
-| `auth_logout` | Deletes the stored key from this machine. |
-| `list_image_models` | Lists image models live from OpenRouter, with filters for search, image input, author and sort order. |
-| `get_image_model` | Shows one model's real aspect ratios, resolutions, quality values, limits and pricing. |
-| `generate_image` | Text to image. Saves to `~/Pictures/OpenRouter Images` unless you give `output_dir`. |
-| `edit_image` | One or more input images plus a prompt to a new image. Supports masks and exact output sizes. |
-| `remask_image` | Redoes the mask blend of a masked `edit_image` result with a new mask. Runs locally: free, nothing uploaded. |
+| --- | --- |
+| `account_status` | Shows configured Northwestern cohort/workspace, sign-in state, key label, spending and available limits. |
+| `auth_login` | Starts browser sign-in constrained to this workspace. |
+| `auth_logout` | Removes this cohort's saved credential. |
+| `list_image_models` | Discovers available image models and pricing. |
+| `get_image_model` | Shows model parameters, providers and prices. |
+| `generate_image` | Generates images with metadata and reported costs. |
+| `edit_image` | Edits local images using references, masks and output sizing. |
+| `remask_image` | Re-blends a saved masked edit locally, with no upload or model charge. |
 
-The `skills/` folder holds two companion skills: `openrouter-image` (model choice, cost habits, masks, moderation) and `architectural-render-polish`.
+New images default to `~/Pictures/Northwestern AI/Class of 2027` or `Class of 2028`. Edits save beside the primary input. Existing explicit output overrides remain available. Files are not overwritten; JSON sidecars record prompts, settings and reported costs. Keep those files in mind when sharing coursework.
 
-### Fixing a seam after a masked edit
+Prompts and input images go through OpenRouter to third-party providers. Get explicit permission before uploading other people's images, research materials or confidential project information. Start with one low-cost draft and relay reported spending. Use the live catalog for model choice and prices. Organization/workspace budgets are administered in OpenRouter; this server does not create or increase them.
 
-A masked edit blends the model's image into the original through the mask. If the model drew past the mask (an arm or a shadow cut off at the edge) you can get a ghosted seam even when the new content itself is good. Since v0.2.0 every masked edit also saves the model's image before the blend as `<result>.unmasked.png`, at the input's exact size, and records it as `unmasked_path` in the sidecar (`null` for results made without a mask). Draw a bigger or smaller mask and ask Claude to run `remask_image` on the result: it re-blends that saved layer over the original input on your machine, so it costs nothing and nothing is uploaded. It needs the original input unchanged in its place, and results made by earlier versions can't be re-masked.
+## Inline image previews
 
-## Prerequisites
+The existing server includes an MCP Apps gallery for `generate_image`, `edit_image`,
+and `remask_image`. Hosts advertising MCP Apps HTML support receive a bundled viewer
+with JPEG previews, filenames, saved paths, reported usage/cost, notes and failures.
+Original files still save locally. Clients without that capability keep receiving
+ordinary text and image content. SVGs and files beyond the preview limit show their
+saved filenames without an inline preview. The gallery needs no network connection.
 
-Install [uv](https://docs.astral.sh/uv/) and [Git](https://git-scm.com/) (uv uses Git to fetch the server from this repo):
+After updating the checkout, fully exit and reopen Claude Desktop, then start a new
+chat to refresh tool metadata. Actual inline rendering depends on the installed
+host's MCP Apps support for local servers. Claude's web app cannot reach this local
+stdio server directly.
 
-```
-winget install astral-sh.uv      # Windows
-winget install Git.Git           # Windows
-brew install uv git              # macOS (or run `xcode-select --install` for Apple's Git)
-```
+To check the gallery without paying for a model call, prepare a synthetic fixture:
 
-Open a new terminal afterwards so `uvx` and `git` are on your PATH, and **restart Claude (quit it fully) after installing uv or Git** so it sees them too.
-
-## Install
-
-### Claude Code
-
-```
-/plugin marketplace add skelly-77/openrouter-image-mcp
-/plugin install openrouter-image@skelly-77-tools
+```powershell
+.venv\Scripts\python.exe scripts\prepare_gallery_test.py
 ```
 
-This installs the server config and both skills.
+Paste the printed `remask_image` request into the new Claude Desktop chat. It creates
+a local preview with a $0.00 cost and uploads nothing. An existing masked edit can
+also be re-masked for free; a plain generated image lacks the required mask sidecar.
 
-### Claude Desktop (Windows)
+## Companion skills and local plugin
 
-1. Print a config snippet filled in with this machine's paths:
-
-   ```
-   uvx --from git+https://github.com/skelly-77/openrouter-image-mcp@v0.2.0 openrouter-image-mcp print-config --client desktop
-   ```
-
-2. Open the config file through **Settings → Developer → Edit Config** and merge the `openrouter-image` entry into its `mcpServers` object (back the file up first). Use this route on the Microsoft Store (MSIX) build in particular: edits made by hand under `%APPDATA%\Claude` can be redirected or vanish there. The command only prints; it never edits files.
-3. Restart Claude Desktop fully (quit from the tray icon).
-
-**Why the `UV_*` variables?** The Microsoft Store (MSIX) build of Claude Desktop virtualizes writes under `AppData`, so uv's default cache, tools and Python folders can be hidden or discarded. The snippet sets `UV_PYTHON_INSTALL_DIR`, `UV_CACHE_DIR` and `UV_TOOL_DIR` to real folders under `%USERPROFILE%\.uv`, written out literally because the config file does not expand variables.
-
-**Skills for Desktop:** download the repo for the release tag ([v0.2.0 zip](https://github.com/skelly-77/openrouter-image-mcp/archive/refs/tags/v0.2.0.zip)), unzip it, then zip each folder under `skills/` on its own (so each zip contains the skill folder with its `SKILL.md`) and upload them in Settings → Capabilities.
-
-### GitHub Copilot Code (to be confirmed)
-
-Not yet verified: the config file location, its exact format and the skills folder are still open. The standard stdio entry is below. `print-config --client copilot` prints the same JSON to stdout (so you can pipe or paste it) and an "unverified" note to stderr.
-
-```json
-{
-  "mcpServers": {
-    "openrouter-image": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/skelly-77/openrouter-image-mcp@v0.2.0",
-        "openrouter-image-mcp"
-      ]
-    }
-  }
-}
-```
-
-If its sandbox cannot open a browser or reach the credential store, sign in from a terminal (below).
-
-## First sign-in
-
-Either run this in a terminal:
-
-```
-uvx --from git+https://github.com/skelly-77/openrouter-image-mcp@v0.2.0 openrouter-image-mcp login
-```
-
-or just ask Claude to run `auth_login`, then approve in the browser. The key is stored in your operating system's credential store (Windows Credential Manager, macOS Keychain) and nowhere else. Other commands: `status`, `logout`, `login --switch` (different account).
-
-## Organization billing and privacy
-
-- Keys are locked to your firm's OpenRouter organization's image workspace, so every call spends **org credits**, not personal ones.
-- Credits must be added by an org admin (account switcher → the organization → Credits) before anyone can generate. Only org admins buy credits or see billing.
-- Organizations are limited to 10 members by default (contact OpenRouter support for more).
-- **Privacy:** members see request metadata (model, cost, tokens, creator) for everyone's requests in the workspace, but prompt and response content only for their own requests. Org admins can view everyone's prompts and outputs.
-- Client renders and other uploaded images pass through OpenRouter to the model provider (for example OpenAI or Google). **Get the client's or project lead's OK before uploading client imagery.** The skills make Claude ask first.
-- Admins can set guardrails on the workspace: allowed models, budgets and data policy.
-- **Members who leave:** a member who leaves or is removed from the organization loses access to its credits and API keys. A member who still has active API keys in a workspace can't be removed from that workspace until those keys are deleted — delete their keys first (Workspace → API Keys).
-
-## Configuration
-
-All settings are optional environment variables. Set them in the `env` block of the server's MCP config entry.
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `OPENROUTER_IMAGE_WORKSPACE_ID` | the organization's image workspace | Workspace that sign-in creates keys in. An empty string means your personal account. |
-| `OPENROUTER_IMAGE_OUTPUT_DIR` | `~/Pictures/OpenRouter Images` | Where `generate_image` saves, and the fallback when an edit's folder isn't writable. Empty means the default. |
-| `OPENROUTER_IMAGE_MAX_INPUT_EDGE` | `2048` | Input images are downscaled to this longest edge (pixels) before upload. |
-| `OPENROUTER_IMAGE_TIMEOUT_S` | `600` | Seconds to wait for one generation. |
-| `OPENROUTER_IMAGE_RATIO_TOLERANCE` | `0.03` | How close (3%) a model's aspect ratio must be to the input's for `fit="preserve"` to crop instead of pad. |
-
-## Cost visibility
-
-Each generation reports its cost and the sidecar records it. Failed or cancelled generations are not charged. Ask Claude for `account_status` for today's and this month's usage. Larger `n` and max-quality settings cost more, so iterate cheaply first.
-
-## Troubleshooting
-
-| Symptom | Fix |
-|---|---|
-| 401 or "not signed in" | The key was deleted or revoked. Ask Claude to run `auth_login` and sign in again. |
-| Server won't start in Desktop, or uv errors about permissions or missing folders | Add the `UV_*` environment variables from `print-config --client desktop` (see the MSIX note above). |
-| Sign-in doesn't stick | Check Windows Credential Manager for an entry named `openrouter-image-mcp` (`cmdkey /list` may show it as `default@openrouter-image-mcp`). Delete it and sign in again if it looks stale. |
-| "Git executable not found" or "Failed to clone" when the server starts | Install Git (`winget install Git.Git`, or `brew install git` / `xcode-select --install` on macOS), then quit and restart Claude so it picks up the new PATH. |
-| "Couldn't reach the OpenRouter catalog" | A network or proxy problem fetching the model list. Retry; check you can open https://openrouter.ai/api/v1/images/models in a browser. |
-| Moderation refusal | The model's provider declined the prompt or image. Reword the prompt, drop the flagged element, or try another model. |
-
-## Future work
-
-A hosted remote MCP (streamable HTTP plus OAuth) would remove the need for a local `uv` install, but it means running a service that holds user keys, so it is out of scope for v1.
+`skills/openrouter-image` carries the general workflow; `skills/architectural-render-polish` remains optional. Run `python scripts/sync_plugin_skills.py` after source skill changes. The bundled Claude Code plugin contains one instructor entry configured for 2027 and uses `uv run --no-sync` against the prepared checkout; it requires an installed environment and `uv` on the client's PATH. It is not a published Northwestern distribution.
 
 ## Development
 
-```
-uv sync
-uv run pytest                                  # unit tests, no network
-uv run pytest -m live                          # hits real OpenRouter; sign in first
-uv run ruff check
-uv run python scripts/sync_plugin_skills.py    # after editing skills/, refresh plugin/skills/
+```powershell
+.venv\Scripts\python.exe -m pytest -q
+.venv\Scripts\ruff.exe check .
 ```
 
-CI runs ruff and the unit tests on Windows, macOS and Ubuntu.
+Live tests are excluded by default because they use OpenRouter and may cost money. Original project provenance remains in the Git remote and MIT license. Keep student roster data in the roster spreadsheet.
 
-## License
+The gallery HTML is committed in the Python package. Node is only needed to change
+or rebuild it, not to run the server:
 
-MIT, see [LICENSE](LICENSE).
+```powershell
+cd ui
+npm ci
+npm run build
+npm test
+```
+
+Browser tests use Playwright Chromium, or set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to an
+existing Chrome executable. They exercise the bundled viewer with a synthetic
+image and a mock MCP Apps host, without OpenRouter calls.

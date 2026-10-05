@@ -61,7 +61,7 @@ def browser():
 def make_manager(client, browser, memory_keyring):
     managers: list[LoginManager] = []
 
-    def make(timeout_s: float = 30, workspace_id: str = "") -> LoginManager:
+    def make(timeout_s: float = 30, workspace_id: str = "21082e84-ae02-4639-ad40-c7251b98ab10") -> LoginManager:
         settings = load_settings({"OPENROUTER_IMAGE_WORKSPACE_ID": workspace_id})
         m = LoginManager(client, settings, open_browser=browser, timeout_s=timeout_s)
         managers.append(m)
@@ -179,7 +179,7 @@ async def test_full_flow_success(make_manager, browser, router):
         f"If it didn't open, visit: {result['url']}"
     )
     p = params(result["url"])
-    assert p["key_label"] == f"openrouter-image-mcp ({socket.gethostname()})"
+    assert p["key_label"] == f"Northwestern AI Images Class of 2027 ({socket.gethostname()})"
     assert re.fullmatch(r"http://127\.0\.0\.1:\d+/callback", p["callback_url"])
     assert m.status()["state"] == "pending"
     assert m.status()["url"] == result["url"]
@@ -465,7 +465,7 @@ async def test_browser_failure_still_pending(client, memory_keyring):
     def broken(url):
         raise RuntimeError("no browser")
 
-    m = LoginManager(client, load_settings({}), open_browser=broken, timeout_s=30)
+    m = LoginManager(client, load_settings({"OPENROUTER_IMAGE_COHORT": "2027"}), open_browser=broken, timeout_s=30)
     try:
         result = await m.start()
         assert result["state"] == "pending"

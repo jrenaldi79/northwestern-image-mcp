@@ -25,7 +25,7 @@ SOURCE_STEM = "in__gpt-image-2.5-sunburst_20261003-221500_1"
 @pytest.fixture
 def settings(tmp_path):
     return Settings(
-        workspace_id="",
+        workspace_id="21082e84-ae02-4639-ad40-c7251b98ab10",
         output_dir=tmp_path / "out",
         max_input_edge=2048,
         timeout_s=30,

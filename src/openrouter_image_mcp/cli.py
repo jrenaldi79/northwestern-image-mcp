@@ -4,84 +4,76 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import glob
 import importlib
 import json
-import os
-import re
-import shutil
 import sys
-from pathlib import Path, PureWindowsPath
-from typing import Literal
+from pathlib import Path
 
 import keyring.errors
 
 from . import keystore
 from .auth import LoginManager, LoginState
 from .client import OpenRouterClient
-from .config import load_settings
+from .config import COHORT_WORKSPACES, load_settings
 from .errors import OpenRouterError
 from .keystore import InsecureKeyringError
 from .logs import configure_logging, redact
 
-REPO_URL = "git+https://github.com/skelly-77/openrouter-image-mcp"
-SERVER_NAME = "openrouter-image"
-DEFAULT_REF = "v0.2.0"
-COPILOT_NOTE = (
-    "Unverified: Copilot Code's MCP config format has not been confirmed yet. "
-    "The standard stdio entry is printed to stdout."
+SERVER_NAME = "northwestern-images"
+SIGNED_OUT_MSG = (
+    "Not signed in. Run `openrouter-image-mcp login`. Keep this cohort selected."
 )
-SIGNED_OUT_MSG = "Not signed in. Run `openrouter-image-mcp login`."
 LOGOUT_MSG = (
     "Signed out. To revoke the key on OpenRouter, delete it at "
     "https://openrouter.ai/settings/keys"
 )
-UVX_MISSING_MSG = (
-    "Could not find uvx. Install uv first: winget install astral-sh.uv "
-    "(then open a new terminal and retry)."
-)
-
-ClientName = Literal["desktop", "code", "copilot"]
 
 
-def find_uvx() -> str | None:
-    found = shutil.which("uvx")
-    if found:
-        return found
-    local = os.environ.get("LOCALAPPDATA")
-    if local:
-        pattern = os.path.join(
-            local, "Microsoft", "WinGet", "Packages", "astral-sh.uv_*", "uvx.exe"
-        )
-        matches = sorted(glob.glob(pattern))
-        if matches:
-            return matches[0]
-    return None
+def render_local_config(project: Path, executable: Path, *, cohort: str) -> str:
+    """Launch one Northwestern server using the selected cohort's workspace."""
+    settings = load_settings({"OPENROUTER_IMAGE_COHORT": cohort})
+    return json.dumps(
+        {
+            "mcpServers": {
+                SERVER_NAME: {
+                    "command": str(executable),
+                    "args": ["-m", "openrouter_image_mcp.cli"],
+                    "env": {
+                        "PYTHONPATH": str(project / "src"),
+                        "OPENROUTER_IMAGE_COHORT": cohort,
+                        "OPENROUTER_IMAGE_WORKSPACE_ID": settings.workspace_id,
+                    },
+                }
+            }
+        },
+        indent=2,
+    )
 
 
-def _uv_dir(home: Path, *parts: str) -> str:
-    if re.match(r"^[A-Za-z]:", str(home)):
-        return str(PureWindowsPath(str(home), ".uv", *parts))
-    return str(home / ".uv" / Path(*parts))
-
-
-def render_config(
-    client: ClientName, uvx: str, home: Path, ref: str = DEFAULT_REF
-) -> str:
-    args = ["--from", f"{REPO_URL}@{ref}", "openrouter-image-mcp"]
-    if client == "desktop":
-        entry: dict = {
-            "command": uvx,
-            "args": args,
-            "env": {
-                "UV_PYTHON_INSTALL_DIR": _uv_dir(home, "python"),
-                "UV_CACHE_DIR": _uv_dir(home, "cache"),
-                "UV_TOOL_DIR": _uv_dir(home, "tools"),
-            },
-        }
-    else:
-        entry = {"command": "uvx", "args": args}
-    return json.dumps({"mcpServers": {SERVER_NAME: entry}}, indent=2)
+def render_plugin_config(cohort: str = "2027") -> str:
+    """Local instructor plugin template; student configuration selects their cohort."""
+    settings = load_settings({"OPENROUTER_IMAGE_COHORT": cohort})
+    return json.dumps(
+        {
+            "mcpServers": {
+                SERVER_NAME: {
+                    "command": "uv",
+                    "args": [
+                        "run",
+                        "--directory",
+                        chr(36) + "{CLAUDE_PLUGIN_ROOT}/..",
+                        "--no-sync",
+                        "openrouter-image-mcp",
+                    ],
+                    "env": {
+                        "OPENROUTER_IMAGE_COHORT": cohort,
+                        "OPENROUTER_IMAGE_WORKSPACE_ID": settings.workspace_id,
+                    },
+                }
+            }
+        },
+        indent=2,
+    )
 
 
 # ----------------------------------------------------------------- commands
@@ -95,8 +87,11 @@ def _serve(args: argparse.Namespace) -> int:
 
 async def _login(switch: bool) -> int:
     settings = load_settings()
-    client = OpenRouterClient(timeout_s=settings.timeout_s)
+    client = OpenRouterClient(
+        timeout_s=settings.timeout_s, workspace_id=settings.workspace_id
+    )
     try:
+        print(settings.target)
         manager = LoginManager(client, settings)
         started = await manager.start(switch_account=switch)
         print(started["message"])
@@ -125,13 +120,17 @@ def _login_cmd(args: argparse.Namespace) -> int:
 
 
 def _logout(args: argparse.Namespace) -> int:
-    keystore.delete_key()
+    settings = load_settings()
+    keystore.delete_key(workspace_id=settings.workspace_id)
+    print(settings.target)
     print(LOGOUT_MSG)
     return 0
 
 
-async def _key_info(timeout_s: float) -> dict:
-    client = OpenRouterClient(timeout_s=timeout_s)
+async def _key_info(settings) -> dict:
+    client = OpenRouterClient(
+        timeout_s=settings.timeout_s, workspace_id=settings.workspace_id
+    )
     try:
         return await client.key_info()
     finally:
@@ -143,12 +142,13 @@ def _money(value: object) -> str:
 
 
 def _status(args: argparse.Namespace) -> int:
-    if keystore.get_key() is None:
+    settings = load_settings()
+    print(settings.target)
+    if keystore.get_key(workspace_id=settings.workspace_id) is None:
         print(SIGNED_OUT_MSG)
         return 1
-    settings = load_settings()
     try:
-        info = asyncio.run(_key_info(settings.timeout_s))
+        info = asyncio.run(_key_info(settings))
     except OpenRouterError as exc:
         print(exc.message)
         return 1
@@ -164,13 +164,8 @@ def _status(args: argparse.Namespace) -> int:
 
 
 def _print_config(args: argparse.Namespace) -> int:
-    uvx = find_uvx()
-    if uvx is None and args.client == "desktop":
-        print(UVX_MISSING_MSG, file=sys.stderr)
-        return 1
-    if args.client == "copilot":
-        print(COPILOT_NOTE, file=sys.stderr)  # keep stdout pasteable JSON
-    print(render_config(args.client, uvx or "uvx", Path.home(), ref=args.ref))
+    project = Path(__file__).resolve().parents[2]
+    print(render_local_config(project, Path(sys.executable), cohort=args.cohort))
     return 0
 
 
@@ -185,17 +180,22 @@ def _parser() -> argparse.ArgumentParser:
     parser.set_defaults(func=_serve)
     sub = parser.add_subparsers(dest="command")
 
-    sub.add_parser("serve", help="run the MCP server over stdio (default)").set_defaults(
-        func=_serve
-    )
+    sub.add_parser(
+        "serve", help="run the MCP server over stdio (default)"
+    ).set_defaults(func=_serve)
     login = sub.add_parser("login", help="sign in to OpenRouter in your browser")
-    login.add_argument("--switch", action="store_true", help="sign in as a different account")
+    login.add_argument(
+        "--switch", action="store_true", help="sign in as a different account"
+    )
     login.set_defaults(func=_login_cmd)
-    sub.add_parser("logout", help="remove the stored API key").set_defaults(func=_logout)
-    sub.add_parser("status", help="show sign-in state and usage").set_defaults(func=_status)
+    sub.add_parser("logout", help="remove the stored API key").set_defaults(
+        func=_logout
+    )
+    sub.add_parser("status", help="show sign-in state and usage").set_defaults(
+        func=_status
+    )
     pc = sub.add_parser("print-config", help="print an MCP client config snippet")
-    pc.add_argument("--client", choices=["desktop", "code", "copilot"], default="desktop")
-    pc.add_argument("--ref", default=DEFAULT_REF, help="git tag or branch to install")
+    pc.add_argument("--cohort", required=True, choices=sorted(COHORT_WORKSPACES))
     pc.set_defaults(func=_print_config)
     return parser
 
@@ -208,9 +208,11 @@ def main(argv: list[str] | None = None) -> int:
         print(redact(str(exc)), file=sys.stderr)
         return 1
     except keyring.errors.KeyringError as exc:
-        print(redact(f"Couldn't access the OS credential store: {exc}"), file=sys.stderr)
+        print(
+            redact(f"Couldn't access the OS credential store: {exc}"), file=sys.stderr
+        )
         return 1
-    except OSError as exc:  # e.g. the sign-in listener couldn't bind
+    except (OSError, ValueError) as exc:  # e.g. the sign-in listener couldn't bind
         print(redact(str(exc)), file=sys.stderr)
         return 1
 

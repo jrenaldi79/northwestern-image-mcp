@@ -1,12 +1,18 @@
 {
   "mcpServers": {
-    "openrouter-image": {
-      "command": "uvx",
+    "northwestern-images": {
+      "command": "uv",
       "args": [
-        "--from",
-        "git+https://github.com/skelly-77/openrouter-image-mcp@v0.2.0",
+        "run",
+        "--directory",
+        "${CLAUDE_PLUGIN_ROOT}/..",
+        "--no-sync",
         "openrouter-image-mcp"
-      ]
+      ],
+      "env": {
+        "OPENROUTER_IMAGE_COHORT": "2027",
+        "OPENROUTER_IMAGE_WORKSPACE_ID": "21082e84-ae02-4639-ad40-c7251b98ab10"
+      }
     }
   }
 }

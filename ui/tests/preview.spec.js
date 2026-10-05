@@ -1,0 +1,149 @@
+import { test, expect } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+
+// Test the distributed artifact, with the real SDK and an iframe host.
+const html = await readFile(new URL('../../src/openrouter_image_mcp/ui/preview.html', import.meta.url), 'utf8')
+  .catch(error => { if (error.code === 'ENOENT') return '<!doctype html><body></body>'; throw error; });
+const jpeg = `data:image/jpeg;base64,${(await readFile(new URL('./fixtures/grid-jpeg.txt', import.meta.url), 'utf8')).trim()}`;
+const sample = (overrides = {}) => ({
+  images: [{ dataUri: jpeg, filename: 'render.png', path: 'C:\\images\\render.png' }],
+  model: 'example/image-model', provider: 'Example provider', callCostUsd: 0.01234,
+  usageLine: 'Cost: $0.01234 (reported; estimates may differ from final billing).', notes: [], failures: [],
+  ...overrides,
+});
+
+async function openViewer(page, { resultAtInitialize, theme = 'light' } = {}) {
+  const requests = [];
+  page.on('pageerror', error => console.error('Viewer error:', error.message));
+  page.on('console', message => { if (message.type() === 'error') console.error('Viewer console:', message.text()); });
+  await page.route('**/*', route => { requests.push(route.request().url()); return route.abort(); });
+  await page.setContent('<iframe title="Image preview" sandbox="allow-scripts" style="width:700px;height:100px;border:0"></iframe>');
+  await page.evaluate(({ html, resultAtInitialize, theme }) => {
+    window.hostMessages = [];
+    const iframe = document.querySelector('iframe');
+    window.notify = (method, params) => iframe.contentWindow.postMessage({ jsonrpc: '2.0', method, params }, '*');
+    window.addEventListener('message', event => {
+      if (event.source !== iframe.contentWindow) return;
+      window.hostMessages.push(event.data);
+      if (event.data.method === 'ui/initialize') {
+        iframe.contentWindow.postMessage({ jsonrpc: '2.0', id: event.data.id, result: {
+          protocolVersion: '2026-01-26', hostInfo: { name: 'Offline test host', version: '1.0.0' },
+          hostCapabilities: {}, hostContext: { theme, displayMode: 'inline' },
+        } }, '*');
+        if (resultAtInitialize) window.notify('ui/notifications/tool-result', resultAtInitialize);
+      }
+      if (event.data.method === 'ui/notifications/size-changed') {
+        iframe.style.height = `${event.data.params.height}px`;
+      }
+    });
+    iframe.srcdoc = html;
+  }, { html, resultAtInitialize, theme });
+  return { viewer: page.frameLocator('iframe'), requests };
+}
+
+async function result(page, structuredContent, extra = {}) {
+  await expect.poll(() => page.evaluate(() => window.hostMessages.some(m => m.method === 'ui/notifications/initialized'))).toBe(true);
+  await page.evaluate(params => window.notify('ui/notifications/tool-result', params), {
+    content: [], structuredContent, ...extra,
+  });
+}
+
+test('initializes and waits for an image result', async ({ page }) => {
+  const { viewer } = await openViewer(page);
+  await expect(viewer.getByRole('status')).toHaveText('Waiting for image results…');
+  await expect.poll(() => page.evaluate(() => window.hostMessages.some(m => m.method === 'ui/notifications/initialized'))).toBe(true);
+});
+
+test('receives immediate results, renders JPEG and reports its new size', async ({ page }) => {
+  const { viewer, requests } = await openViewer(page, { resultAtInitialize: { content: [], structuredContent: sample() } });
+  await expect(viewer.getByRole('img', { name: 'render.png' })).toBeVisible();
+  await expect.poll(() => viewer.getByRole('img').evaluate(img => img.complete && img.naturalWidth)).toBe(40);
+  await expect(viewer.getByText('C:\\images\\render.png', { exact: true })).toBeVisible();
+  await expect(viewer.getByText('Example provider', { exact: true })).toBeVisible();
+  await expect(viewer.getByText(sample().usageLine, { exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.hostMessages.filter(m => m.method === 'ui/notifications/size-changed').some(m => m.params.height > 150))).toBe(true);
+  expect(requests).toEqual([]);
+  await expect.poll(() => page.locator('iframe').evaluate(frame => frame.clientHeight)).toBeGreaterThan(150);
+  await page.screenshot({ path: 'test-results/gallery.png' });
+});
+
+test('shows call total once across multiple images', async ({ page }) => {
+  const { viewer } = await openViewer(page);
+  await result(page, sample({ usageLine: '', images: [sample().images[0], { ...sample().images[0], filename: 'second.png' }] }));
+  await expect(viewer.getByText('Call total: $0.01234', { exact: true })).toHaveCount(1);
+  await expect(viewer.getByRole('img')).toHaveCount(2);
+});
+
+test('distinguishes unavailable cost from free remasking', async ({ page }) => {
+  const { viewer } = await openViewer(page);
+  await result(page, sample({ callCostUsd: null, provider: null, usageLine: '' }));
+  await expect(viewer.getByText('Call total: unavailable', { exact: true })).toBeVisible();
+  await result(page, sample({ callCostUsd: 0, model: 'Local re-blend', provider: null, usageLine: '' }));
+  await expect(viewer.getByText('Call total: free ($0)', { exact: true })).toBeVisible();
+  await expect(viewer.getByText('Local re-blend', { exact: true })).toBeVisible();
+  await expect(viewer.getByText('Call total: unavailable', { exact: true })).toHaveCount(0);
+});
+
+test('keeps the original usage and cost disclosure without duplicating a total', async ({ page }) => {
+  const { viewer } = await openViewer(page);
+  await result(page, sample());
+  await expect(viewer.getByText(sample().usageLine, { exact: true })).toBeVisible();
+  await expect(viewer.getByText('Call total: $0.01234', { exact: true })).toHaveCount(0);
+  await result(page, sample({ callCostUsd: null, usageLine: 'Cost unavailable' }));
+  await expect(viewer.getByText('Cost unavailable', { exact: true })).toBeVisible();
+  await result(page, sample({ callCostUsd: 0, model: 'Local re-blend', usageLine: 'Cost: $0.00 (local re-blend, nothing uploaded)' }));
+  await expect(viewer.getByText('Cost: $0.00 (local re-blend, nothing uploaded)', { exact: true })).toBeVisible();
+});
+
+test('preserves filename and path without a preview', async ({ page }) => {
+  const { viewer } = await openViewer(page);
+  await result(page, sample({ images: [{ dataUri: null, filename: 'vector.svg', path: 'C:\\images\\vector.svg' }] }));
+  await expect(viewer.getByText('vector.svg', { exact: true })).toBeVisible();
+  await expect(viewer.getByText('C:\\images\\vector.svg', { exact: true })).toBeVisible();
+  await expect(viewer.getByText('Preview unavailable', { exact: true })).toBeVisible();
+  await expect(viewer.getByRole('img')).toHaveCount(0);
+});
+
+test('shows partial results, notes, and failures as text', async ({ page }) => {
+  const { viewer } = await openViewer(page);
+  await result(page, sample({ notes: ['Preview reduced to fit.'], failures: ['Image 2 could not be saved.'] }));
+  await expect(viewer.getByRole('status')).toHaveText('1 image saved · Partial result');
+  await expect(viewer.getByRole('img')).toHaveCount(1);
+  await expect(viewer.getByText('Preview reduced to fit.', { exact: true })).toBeVisible();
+  await expect(viewer.getByText('Image 2 could not be saved.', { exact: true })).toBeVisible();
+});
+
+test('shows ordinary tool error text without structured results', async ({ page }) => {
+  const { viewer } = await openViewer(page);
+  await result(page, undefined, { isError: true, content: [{ type: 'text', text: 'No image: signed out.' }] });
+  await expect(viewer.getByRole('status')).toHaveText('Image request failed');
+  await expect(viewer.getByText('No image: signed out.', { exact: true })).toBeVisible();
+});
+
+test('shows fallback text on a result with no images', async ({ page }) => {
+  const { viewer } = await openViewer(page);
+  await result(page, sample({ images: [] }), { content: [{ type: 'text', text: 'Provider returned no images.' }] });
+  await expect(viewer.getByRole('status')).toHaveText('No images returned');
+  await expect(viewer.getByText('Provider returned no images.', { exact: true })).toBeVisible();
+});
+
+test('renders hostile fields literally and never requests hostile URLs', async ({ page }) => {
+  const { viewer, requests } = await openViewer(page);
+  const hostile = '<img src="https://evil.test/pixel" onerror="window.pwned=true">';
+  await result(page, sample({
+    images: ['https://evil.test/image.jpg', 'javascript:alert(1)', 'data:image/svg+xml;base64,PHN2Zz4=', 'data:image/jpeg;base64,!!!'].map(dataUri => ({ dataUri, filename: hostile, path: hostile })),
+    model: hostile, provider: hostile, usageLine: hostile, notes: [hostile], failures: [hostile],
+  }));
+  await expect(viewer.getByText(hostile, { exact: true }).first()).toBeVisible();
+  await expect(viewer.getByRole('img')).toHaveCount(0);
+  await expect(viewer.locator('a, svg')).toHaveCount(0);
+  expect(await viewer.locator('body').evaluate(() => window.pwned)).toBeUndefined();
+  expect(requests).toEqual([]);
+});
+
+test('follows host theme changes', async ({ page }) => {
+  const { viewer } = await openViewer(page, { theme: 'dark' });
+  await expect(viewer.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.evaluate(() => window.notify('ui/notifications/host-context-changed', { theme: 'light' }));
+  await expect(viewer.locator('html')).toHaveAttribute('data-theme', 'light');
+});

@@ -19,9 +19,18 @@ from typing import Any, Literal
 import keyring.errors
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import ImageContent, TextContent
+from mcp.types import CallToolResult, ImageContent, TextContent
 
 from . import __version__, keystore
+from .apps import (
+    IMAGE_TOOLS,
+    UI_URI,
+    ImageApps,
+    app_icons,
+    negotiate_apps,
+    preview_image,
+    register_gallery,
+)
 from .auth import LoginManager, LoginState
 from .catalog import Catalog, ModelCapabilities, price_key
 from .client import OpenRouterClient
@@ -46,30 +55,33 @@ TABLE_COLUMNS = (
 _PRICE_UNITS = (("image_output", "img-unit"), ("image", "image"), ("completion", "tok"))
 _DASH = "—"
 
-ImageResult = list[TextContent | ImageContent]
+ImageResult = CallToolResult
 
 
 # ------------------------------------------------------------------ helpers
 
 
 @contextmanager
-def _tool_errors() -> Iterator[None]:
+def _tool_errors(target: str = "") -> Iterator[None]:
     """Turn the package's expected failures into tool errors (isError=True)."""
+    def failure(message: str) -> ToolError:
+        return ToolError(redact(f"{target}\n{message}" if target else message))
+
     try:
         yield
     except CatalogUnavailableError as exc:
         message = exc.message
         if not message.startswith(CATALOG_PREFIX):
             message = f"{CATALOG_PREFIX}: {message}"
-        raise ToolError(message) from None
+        raise failure(message) from None
     except OpenRouterError as exc:
-        raise ToolError(exc.message) from None
+        raise failure(exc.message) from None
     except (InputError, keystore.InsecureKeyringError) as exc:
-        raise ToolError(redact(str(exc))) from None
+        raise failure(str(exc)) from None
     except keyring.errors.KeyringError as exc:
-        raise ToolError(redact(f"{KEYRING_ERROR_PREFIX}: {exc}")) from None
+        raise failure(f"{KEYRING_ERROR_PREFIX}: {exc}") from None
     except OSError as exc:  # unwritable output folder, sign-in listener bind, disk full
-        raise ToolError(redact(str(exc))) from None
+        raise failure(str(exc)) from None
 
 
 def _progress(ctx: Context) -> ProgressFn:
@@ -277,7 +289,7 @@ def _image_result(result: ServiceResult) -> ImageResult:
         f"{result.elapsed_s:.0f}s"
     )
     lines.append(result.usage_line)
-    content: ImageResult = [TextContent(type="text", text=redact("\n".join(lines)))]
+    content: list[TextContent | ImageContent] = [TextContent(type="text", text=redact("\n".join(lines)))]
     content += [
         ImageContent(
             type="image", data=base64.b64encode(img.preview_jpeg).decode("ascii"),
@@ -286,12 +298,24 @@ def _image_result(result: ServiceResult) -> ImageResult:
         for img in result.images
         if img.preview_jpeg is not None
     ]
-    return content
+    return CallToolResult(content=content, structured_content={
+        "images": [preview_image(img.path, img.preview_jpeg) for img in result.images],
+        "model": redact(result.model),
+        "provider": redact(result.provider) if result.provider else None,
+        "callCostUsd": result.call_cost_usd,
+        "usageLine": redact(result.usage_line),
+        "notes": [redact(note) for note in result.notes],
+        "failures": [redact(failure) for failure in result.failures],
+    })
 
 
 def _add(server: MCPServer, fn: Callable[..., Any]) -> None:
     """Register `fn` with its cleaned docstring as the description and unstructured output."""
-    server.add_tool(fn, description=inspect.cleandoc(fn.__doc__ or ""), structured_output=False)
+    meta = {"ui": {"resourceUri": UI_URI}} if fn.__name__ in IMAGE_TOOLS else None
+    server.add_tool(
+        fn, description=inspect.cleandoc(fn.__doc__ or ""), structured_output=False,
+        meta=meta, icons=app_icons() if fn.__name__ in IMAGE_TOOLS else None,
+    )
 
 
 # ------------------------------------------------------------------ server
@@ -300,7 +324,9 @@ def _add(server: MCPServer, fn: Callable[..., Any]) -> None:
 def build_server(settings: Settings, client: OpenRouterClient | None = None) -> MCPServer:
     """Create the MCP server with the eight tools, sharing one client/catalog/service/login."""
     owns_client = client is None
-    http = client if client is not None else OpenRouterClient(timeout_s=settings.timeout_s)
+    http = client if client is not None else OpenRouterClient(timeout_s=settings.timeout_s, workspace_id=settings.workspace_id)
+    if http.workspace_id != settings.workspace_id:
+        raise ValueError("Client workspace must match the configured cohort workspace.")
     catalog = Catalog(http)
     service = ImageService(http, catalog, settings)
     # Late-bound so the browser opener can be replaced (tests) after import.
@@ -315,7 +341,11 @@ def build_server(settings: Settings, client: OpenRouterClient | None = None) -> 
             if owns_client:
                 await http.aclose()
 
-    server = MCPServer(SERVER_NAME, version=__version__, lifespan=lifespan)
+    server = MCPServer(
+        SERVER_NAME, version=__version__, lifespan=lifespan, icons=app_icons(),
+        extensions=[ImageApps()], middleware=[negotiate_apps],
+    )
+    register_gallery(server)
 
     # ---------------------------------------------------------- account
 
@@ -327,10 +357,10 @@ def build_server(settings: Settings, client: OpenRouterClient | None = None) -> 
         status and link. Use it after `auth_login` to confirm sign-in finished, or when the
         user asks about cost, usage or credits. Takes no parameters.
         """
-        with _tool_errors():
-            if keystore.get_key() is None:
+        with _tool_errors(settings.target):
+            if keystore.get_key(workspace_id=settings.workspace_id) is None:
                 # Not signed in, or the status of a pending/failed/expired sign-in.
-                return redact(login.status()["message"])
+                return redact(settings.target + "\n" + login.status()["message"])
             try:
                 text = _key_status(await http.key_info())
             except AuthRequiredError:
@@ -340,7 +370,7 @@ def build_server(settings: Settings, client: OpenRouterClient | None = None) -> 
             status = login.status()
             if status["state"] == LoginState.PENDING.value:
                 text += "\n" + status["message"]
-            return redact(text)
+            return redact(settings.target + "\n" + text)
 
     async def auth_login(switch_account: bool = False) -> str:
         """Sign in to OpenRouter in the user's browser.
@@ -355,9 +385,9 @@ def build_server(settings: Settings, client: OpenRouterClient | None = None) -> 
             switch_account: true to sign in as a different account or workspace. The current
                 key is kept until the new one is stored.
         """
-        with _tool_errors():
+        with _tool_errors(settings.target):
             started = await login.start(switch_account=switch_account)
-            return redact(started["message"])
+            return redact(settings.target + "\n" + started["message"])
 
     async def auth_logout() -> str:
         """Sign out: delete the stored OpenRouter key from this computer.
@@ -365,10 +395,10 @@ def build_server(settings: Settings, client: OpenRouterClient | None = None) -> 
         The key stays valid on OpenRouter until it is deleted on the keys dashboard; the
         result links that page. Takes no parameters.
         """
-        with _tool_errors():
+        with _tool_errors(settings.target):
             login.reset()  # a pending sign-in must not finish after sign-out
-            keystore.delete_key()
-            return LOGOUT_MSG
+            keystore.delete_key(workspace_id=settings.workspace_id)
+            return settings.target + "\n" + LOGOUT_MSG
 
     # -------------------------------------------------------- discovery
 
@@ -616,13 +646,21 @@ def build_server(settings: Settings, client: OpenRouterClient | None = None) -> 
         ]
         if done.notes:
             lines += ["Notes:", *(f"- {n}" for n in done.notes)]
-        return [
+        return CallToolResult(content=[
             TextContent(type="text", text=redact("\n".join(lines))),
             ImageContent(
                 type="image", data=base64.b64encode(done.preview_jpeg).decode("ascii"),
                 mime_type="image/jpeg",
             ),
-        ]
+        ], structured_content={
+            "images": [preview_image(done.path, done.preview_jpeg)],
+            "model": "Local re-blend",
+            "provider": None,
+            "callCostUsd": 0,
+            "usageLine": lines[1],
+            "notes": [redact(note) for note in done.notes],
+            "failures": [],
+        })
 
     for fn in (
         account_status, auth_login, auth_logout, list_image_models, get_image_model,

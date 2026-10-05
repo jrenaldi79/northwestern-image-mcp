@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Northwestern image preview</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #fff; --fg: #202124; --muted: #666; --line: #ddd; --card: #f7f7f8; }
+    @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #202124; --fg: #eee; --muted: #bbb; --line: #444; --card: #292a2d; } }
+    :root[data-theme="dark"] { color-scheme: dark; --bg: #202124; --fg: #eee; --muted: #bbb; --line: #444; --card: #292a2d; }
+    :root[data-theme="light"] { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 14px; font: 14px/1.45 system-ui, sans-serif; background: var(--color-background-primary, var(--bg)); color: var(--color-text-primary, var(--fg)); }
+    h1 { font-size: 16px; margin: 0 0 6px; }
+    .app-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .app-heading h1 { margin: 0; }
+    .app-heading .app-logo { width: 24px; height: 24px; flex: 0 0 24px; border-radius: 4px; }
+    p { margin: 6px 0; overflow-wrap: anywhere; }
+    #status, .path, .no-preview { color: var(--color-text-secondary, var(--muted)); }
+    #details { margin: 10px 0; }
+    #gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 12px; }
+    figure { margin: 0; border: 1px solid var(--color-border-primary, var(--line)); border-radius: 8px; padding: 10px; background: var(--color-background-secondary, var(--card)); min-width: 0; }
+    img { display: block; width: 100%; height: auto; max-height: 460px; object-fit: contain; border-radius: 4px; }
+    figcaption { margin-top: 8px; overflow-wrap: anywhere; }
+    .filename { font-weight: 600; }
+    .path { font-size: 12px; }
+    .no-preview { padding: 24px 8px; text-align: center; }
+    section { margin-top: 10px; }
+    section:empty, #details:empty { display: none; }
+    h2 { font-size: 14px; margin: 0 0 4px; }
+    ul { padding-left: 20px; margin: 0; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <main aria-labelledby="title">
+    <div class="app-heading"><!-- APP_LOGO --><h1 id="title">Image results</h1></div>
+    <p id="status" role="status" aria-live="polite">Waiting for image results…</p>
+    <div id="details"></div>
+    <div id="gallery" aria-label="Saved images"></div>
+    <section id="notes" aria-label="Notes"></section>
+    <section id="failures" aria-label="Failures"></section>
+    <section id="fallback" aria-label="Tool response"></section>
+  </main>
+  <!-- BUNDLED_SCRIPT -->
+</body>
+</html>

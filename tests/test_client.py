@@ -76,7 +76,7 @@ async def test_images_payload_and_headers(client, mock):
     req = route.calls.last.request
     assert req.headers["Authorization"] == f"Bearer {KEY}"
     assert req.headers["HTTP-Referer"] == "https://github.com/skelly-77/openrouter-image-mcp"
-    assert req.headers["X-Title"] == "openrouter-image-mcp"
+    assert req.headers["X-Title"] == "Northwestern AI Images"
     assert json.loads(req.content) == payload
     # The /api/v1 prefix must survive the relative-path join.
     assert str(req.url) == f"{BASE}/images"

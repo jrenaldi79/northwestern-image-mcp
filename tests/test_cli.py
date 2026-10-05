@@ -1,8 +1,6 @@
 import json
-import shutil
 import sys
 import types
-from pathlib import Path
 from typing import ClassVar
 
 import keyring
@@ -14,8 +12,11 @@ from openrouter_image_mcp import auth, cli, keystore
 from openrouter_image_mcp.auth import LoginState
 from openrouter_image_mcp.errors import OpenRouterError
 
-REF_URL = "git+https://github.com/skelly-77/openrouter-image-mcp@v0.2.0"
-HOME = Path(r"C:\Users\user")
+
+@pytest.fixture(autouse=True)
+def selected_cohort(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_IMAGE_COHORT", "2027")
+    monkeypatch.delenv("OPENROUTER_IMAGE_WORKSPACE_ID", raising=False)
 
 
 def test_default_is_serve(monkeypatch):
@@ -28,90 +29,20 @@ def test_default_is_serve(monkeypatch):
     assert calls == ["log", "run"]
 
 
-def test_desktop_config_shape():
-    out = json.loads(cli.render_config("desktop", r"C:\u\uvx.exe", HOME))
-    entry = out["mcpServers"]["openrouter-image"]
-    assert entry["command"] == r"C:\u\uvx.exe"
-    assert entry["args"] == ["--from", REF_URL, "openrouter-image-mcp"]
-    assert entry["env"] == {
-        "UV_PYTHON_INSTALL_DIR": r"C:\Users\user\.uv\python",
-        "UV_CACHE_DIR": r"C:\Users\user\.uv\cache",
-        "UV_TOOL_DIR": r"C:\Users\user\.uv\tools",
-    }
+def test_print_config_runs_checkout(capsys):
+    assert cli.main(["print-config", "--cohort", "2027"]) == 0
+    config = json.loads(capsys.readouterr().out)
+    assert set(config["mcpServers"]) == {"northwestern-images"}
+    for entry in config["mcpServers"].values():
+        assert entry["command"] == sys.executable
+        assert entry["args"] == ["-m", "openrouter_image_mcp.cli"]
+        assert "git+https" not in json.dumps(entry)
 
 
-def test_desktop_config_honors_ref():
-    out = json.loads(cli.render_config("desktop", "uvx", HOME, ref="v9.9.9"))
-    args = out["mcpServers"]["openrouter-image"]["args"]
-    assert args[1].endswith("@v9.9.9")
-
-
-def test_code_config_is_mcp_json():
-    out = json.loads(cli.render_config("code", r"C:\u\uvx.exe", HOME))
-    entry = out["mcpServers"]["openrouter-image"]
-    assert entry["command"] == "uvx"
-    assert entry["args"] == ["--from", REF_URL, "openrouter-image-mcp"]
-    assert "env" not in entry
-
-
-def test_copilot_config_is_the_standard_entry():
-    out = cli.render_config("copilot", "uvx", HOME)
-    assert json.loads(out) == json.loads(cli.render_config("code", "uvx", HOME))
-
-
-def test_print_config_copilot_note_on_stderr(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "find_uvx", lambda: None)
-    assert cli.main(["print-config", "--client", "copilot"]) == 0
-    captured = capsys.readouterr()
-    entry = json.loads(captured.out)["mcpServers"]["openrouter-image"]  # stdout is pure JSON
-    assert entry["command"] == "uvx"
-    assert "Unverified: Copilot Code's MCP config format has not been confirmed" in captured.err
-
-
-def test_find_uvx_prefers_path(monkeypatch):
-    monkeypatch.setattr(shutil, "which", lambda name: r"C:\bin\uvx.exe")
-    assert cli.find_uvx() == r"C:\bin\uvx.exe"
-
-
-def test_find_uvx_falls_back_to_winget_glob(monkeypatch, tmp_path):
-    exe = tmp_path / "Microsoft" / "WinGet" / "Packages" / "astral-sh.uv_abc" / "uvx.exe"
-    exe.parent.mkdir(parents=True)
-    exe.write_text("")
-    monkeypatch.setattr(shutil, "which", lambda name: None)
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    assert cli.find_uvx() == str(exe)
-
-
-def test_find_uvx_none_when_missing(monkeypatch, tmp_path):
-    monkeypatch.setattr(shutil, "which", lambda name: None)
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    assert cli.find_uvx() is None
-
-
-def test_print_config_desktop(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "find_uvx", lambda: r"C:\u\uvx.exe")
-    assert cli.main(["print-config", "--client", "desktop", "--ref", "v1.2.3"]) == 0
-    entry = json.loads(capsys.readouterr().out)["mcpServers"]["openrouter-image"]
-    assert entry["command"] == r"C:\u\uvx.exe"
-    assert entry["args"][1].endswith("@v1.2.3")
-
-
-def test_print_config_defaults_to_desktop(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "find_uvx", lambda: "uvx")
-    assert cli.main(["print-config"]) == 0
-    assert "env" in json.loads(capsys.readouterr().out)["mcpServers"]["openrouter-image"]
-
-
-def test_print_config_desktop_without_uvx_errors(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "find_uvx", lambda: None)
-    assert cli.main(["print-config", "--client", "desktop"]) == 1
-    assert "winget install astral-sh.uv" in capsys.readouterr().err
-
-
-def test_print_config_code_without_uvx_still_works(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "find_uvx", lambda: None)
-    assert cli.main(["print-config", "--client", "code"]) == 0
-    assert json.loads(capsys.readouterr().out)["mcpServers"]["openrouter-image"]["command"] == "uvx"
+def test_missing_cohort_is_explained(monkeypatch, capsys):
+    monkeypatch.delenv("OPENROUTER_IMAGE_COHORT")
+    assert cli.main(["status"]) == 1
+    assert "OPENROUTER_IMAGE_COHORT" in capsys.readouterr().err
 
 
 def test_status_signed_out_exit_code_1(memory_keyring, capsys):
@@ -123,7 +54,7 @@ class FakeClient:
     info: ClassVar[dict] = {}
     error: Exception | None = None
 
-    def __init__(self, timeout_s):
+    def __init__(self, timeout_s, **kwargs):
         pass
 
     async def key_info(self):

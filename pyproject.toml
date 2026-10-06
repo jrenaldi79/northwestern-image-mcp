@@ -34,6 +34,7 @@ path = "src/openrouter_image_mcp/__init__.py"
 packages = ["src/openrouter_image_mcp"]
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 asyncio_mode = "auto"
 markers = ["live: hits real OpenRouter, needs signed-in key"]
 addopts = "-m 'not live'"

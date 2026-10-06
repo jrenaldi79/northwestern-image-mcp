@@ -32,7 +32,8 @@ def install(config_path: Path, *, cohort: str) -> Path | None:
     entries = json.loads(
         render_local_config(project, Path(sys.executable), cohort=cohort)
     )["mcpServers"]
-    # Replace only the two cohort entries created by the previous installer.
+    # Remove legacy names so the renamed server is installed only once.
+    servers.pop("northwestern-images", None)
     for year in COHORT_WORKSPACES:
         servers.pop(f"northwestern-images-{year}", None)
     servers.update(entries)
@@ -76,5 +77,5 @@ if __name__ == "__main__":
     print(f"Configured: {args.config}")
     if backup is not None:
         print(f"Backup: {backup}")
-    print(f"Entry: northwestern-images (Class of {args.cohort})")
+    print(f"Entry: openrouter-sidecar (Class of {args.cohort})")
     print("Fully quit and reopen Claude Desktop, then complete browser sign-in.")

@@ -12,10 +12,16 @@ from mcp.types import Icon
 
 from .logs import redact
 
-UI_URI = "ui://northwestern-images/preview.html"
+UI_URI = "ui://openrouter-sidecar/preview.html"
+ADVISOR_UI_URI = "ui://openrouter-sidecar/advisor.html"
+SETTINGS_UI_URI = "ui://openrouter-sidecar/settings.html"
 UI_MIME = "text/html;profile=mcp-app"
 UI_EXTENSION = "io.modelcontextprotocol/ui"
 IMAGE_TOOLS = frozenset({"generate_image", "edit_image", "remask_image"})
+ADVISOR_UI_TOOLS = frozenset({"send_advisor_message", "open_advisor_result"})
+SETTINGS_UI_TOOLS = frozenset({"open_sidecar_settings"})
+APP_ONLY_TOOLS = frozenset({"get_advisor_result", "summarize_advisor_result", "export_advisor_result",
+                            "get_sidecar_settings", "run_sidecar_demo", "get_sidecar_demo"})
 
 
 def app_icons() -> list[Icon]:
@@ -38,11 +44,29 @@ class ImageApps(Extension):
 
 def register_gallery(server: MCPServer) -> None:
     @server.resource(
-        UI_URI, name="Northwestern image preview", mime_type=UI_MIME, icons=app_icons(),
+        UI_URI, name="OpenRouter Sidecar image preview", mime_type=UI_MIME, icons=app_icons(),
         meta={"ui": {"csp": {"connectDomains": [], "resourceDomains": []}, "prefersBorder": True}},
     )
     def gallery() -> str:
         return files("openrouter_image_mcp").joinpath("ui", "preview.html").read_text(encoding="utf-8")
+
+
+def register_advisor_viewer(server: MCPServer) -> None:
+    @server.resource(
+        ADVISOR_UI_URI, name="OpenRouter Sidecar advisor result", mime_type=UI_MIME, icons=app_icons(),
+        meta={"ui": {"csp": {"connectDomains": [], "resourceDomains": []}, "prefersBorder": True}},
+    )
+    def viewer() -> str:
+        return files("openrouter_image_mcp").joinpath("ui", "advisor.html").read_text(encoding="utf-8")
+
+
+def register_settings(server: MCPServer) -> None:
+    @server.resource(
+        SETTINGS_UI_URI, name="OpenRouter Sidecar setup and defaults", mime_type=UI_MIME, icons=app_icons(),
+        meta={"ui": {"csp": {"connectDomains": [], "resourceDomains": []}, "prefersBorder": True}},
+    )
+    def settings() -> str:
+        return files("openrouter_image_mcp").joinpath("ui", "settings.html").read_text(encoding="utf-8")
 
 
 async def negotiate_apps(ctx: ServerRequestContext, call_next: CallNext) -> HandlerResult:
@@ -51,17 +75,22 @@ async def negotiate_apps(ctx: ServerRequestContext, call_next: CallNext) -> Hand
     Work on response copies, so another client using the same server can still
     receive the gallery. Ordinary text and JPEG ImageContent always remain.
     """
-    result = await call_next(ctx)
     capabilities = ctx.session.client_capabilities
     settings = (capabilities.extensions or {}).get(UI_EXTENSION, {}) if capabilities else {}
-    if UI_MIME in settings.get("mimeTypes", []):
+    supported = UI_MIME in settings.get("mimeTypes", [])
+    if not supported and ctx.method == "tools/call" and (ctx.params or {}).get("name") in APP_ONLY_TOOLS:
+        return {"isError": True, "content": [{"type": "text", "text": "This operation requires the Sidecar MCP App."}]}
+    result = await call_next(ctx)
+    if supported:
         return result
     # MCP 2.x middleware sees serialized wire dictionaries after call_next.
     if isinstance(result, dict) and ctx.method == "tools/list":
         tools = []
         for tool in result.get("tools", []):
+            if tool.get("name") in APP_ONLY_TOOLS:
+                continue
             copied = dict(tool)
-            if tool.get("name") in IMAGE_TOOLS and "_meta" in tool:
+            if tool.get("name") in IMAGE_TOOLS | ADVISOR_UI_TOOLS | SETTINGS_UI_TOOLS and "_meta" in tool:
                 meta = {k: v for k, v in tool["_meta"].items() if k != "ui"}
                 if meta:
                     copied["_meta"] = meta

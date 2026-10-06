@@ -19,7 +19,7 @@ from .errors import OpenRouterError
 from .keystore import InsecureKeyringError
 from .logs import configure_logging, redact
 
-SERVER_NAME = "northwestern-images"
+SERVER_NAME = "openrouter-sidecar"
 SIGNED_OUT_MSG = (
     "Not signed in. Run `openrouter-image-mcp login`. Keep this cohort selected."
 )
@@ -175,7 +175,7 @@ def _print_config(args: argparse.Namespace) -> int:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="openrouter-image-mcp",
-        description="Local stdio MCP server for OpenRouter image generation.",
+        description="OpenRouter Sidecar: local image tools and side-advisor chats.",
     )
     parser.set_defaults(func=_serve)
     sub = parser.add_subparsers(dest="command")

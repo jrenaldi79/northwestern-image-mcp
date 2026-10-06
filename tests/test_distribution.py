@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 
 from openrouter_image_mcp import __version__
+from openrouter_image_mcp.advisor_tools import ADVISOR_ARGUMENTS
 from openrouter_image_mcp.cli import render_plugin_config
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,7 +25,7 @@ TOOLS = {
     "generate_image",
     "edit_image",
     "remask_image",
-}
+} | ADVISOR_ARGUMENTS.keys()
 
 
 def _tree(base: Path) -> dict[str, bytes]:

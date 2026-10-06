@@ -1,5 +1,5 @@
 {
-  "name": "northwestern-images-preview",
+  "name": "openrouter-sidecar-viewers",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -8,8 +8,13 @@
     "test": "playwright test"
   },
   "devDependencies": {
+    "@lobehub/icons-static-svg": "^1.95.1",
     "@modelcontextprotocol/ext-apps": "2.0.3",
     "@playwright/test": "1.63.0",
     "esbuild": "0.28.2"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.16",
+    "marked": "^18.1.0"
   }
 }

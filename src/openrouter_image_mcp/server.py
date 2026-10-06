@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Literal
 
 import keyring.errors
@@ -22,6 +23,11 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, ImageContent, TextContent
 
 from . import __version__, keystore
+from .advisor import AdvisorService
+from .advisor_client import AdvisorClient
+from .advisor_jobs import AdvisorJobs
+from .advisor_store import AdvisorStore, default_store_path
+from .advisor_tools import enforce_advisor_arguments, register_advisor_tools
 from .apps import (
     IMAGE_TOOLS,
     UI_URI,
@@ -29,19 +35,25 @@ from .apps import (
     app_icons,
     negotiate_apps,
     preview_image,
+    register_advisor_viewer,
     register_gallery,
+    register_settings,
 )
 from .auth import LoginManager, LoginState
 from .catalog import Catalog, ModelCapabilities, price_key
 from .client import OpenRouterClient
 from .config import Settings, load_settings
 from .errors import AuthRequiredError, CatalogUnavailableError, OpenRouterError
+from .image_onboarding import image_runner
 from .imaging import InputError
 from .logs import configure_logging, redact
+from .onboarding import OnboardingDemos
+from .preference_tools import register_preference_tools
+from .preferences import PreferenceService
 from .remask import remask
 from .service import ImageService, ProgressFn, ServiceResult
 
-SERVER_NAME = "openrouter-image"
+SERVER_NAME = "openrouter-sidecar"
 CATALOG_PREFIX = "Couldn't reach the OpenRouter catalog"
 KEYRING_ERROR_PREFIX = "Couldn't access the OS credential store"
 LOGOUT_MSG = (
@@ -321,8 +333,11 @@ def _add(server: MCPServer, fn: Callable[..., Any]) -> None:
 # ------------------------------------------------------------------ server
 
 
-def build_server(settings: Settings, client: OpenRouterClient | None = None) -> MCPServer:
-    """Create the MCP server with the eight tools, sharing one client/catalog/service/login."""
+def build_server(
+    settings: Settings, client: OpenRouterClient | None = None, *,
+    advisor: AdvisorService | None = None, advisor_store_path: Path | None = None,
+) -> MCPServer:
+    """Create image/account tools and credential-scoped local advisor tools."""
     owns_client = client is None
     http = client if client is not None else OpenRouterClient(timeout_s=settings.timeout_s, workspace_id=settings.workspace_id)
     if http.workspace_id != settings.workspace_id:
@@ -331,6 +346,17 @@ def build_server(settings: Settings, client: OpenRouterClient | None = None) -> 
     service = ImageService(http, catalog, settings)
     # Late-bound so the browser opener can be replaced (tests) after import.
     login = LoginManager(http, settings, open_browser=lambda url: webbrowser.open(url))
+    owns_advisor = advisor is None
+    advisors = advisor or AdvisorService(
+        settings.workspace_id, AdvisorStore(advisor_store_path or default_store_path()),
+        AdvisorClient(settings.workspace_id, settings.advisor_timeout_s),
+    )
+    if advisors.workspace_id != settings.workspace_id:
+        raise ValueError("Advisor workspace must match the configured cohort workspace.")
+    advisor_jobs = AdvisorJobs(advisors)
+    preferences = PreferenceService(advisors)
+    demos = OnboardingDemos(advisors, advisor_jobs, preferences,
+                            image_runner=image_runner(settings, advisors))
 
     @asynccontextmanager
     async def lifespan(_server: MCPServer) -> AsyncIterator[dict]:
@@ -338,14 +364,22 @@ def build_server(settings: Settings, client: OpenRouterClient | None = None) -> 
             yield {}
         finally:
             login.cancel()  # close a pending sign-in listener
+            await demos.close()
+            await advisor_jobs.close()
             if owns_client:
                 await http.aclose()
+            if owns_advisor:
+                await advisors.client.aclose()
 
     server = MCPServer(
         SERVER_NAME, version=__version__, lifespan=lifespan, icons=app_icons(),
-        extensions=[ImageApps()], middleware=[negotiate_apps],
+        extensions=[ImageApps()], middleware=[enforce_advisor_arguments, negotiate_apps],
     )
     register_gallery(server)
+    register_advisor_viewer(server)
+    register_settings(server)
+    register_advisor_tools(server, advisors, advisor_jobs, _tool_errors, preferences=preferences)
+    register_preference_tools(server, preferences, demos, catalog, settings, _tool_errors)
 
     # ---------------------------------------------------------- account
 

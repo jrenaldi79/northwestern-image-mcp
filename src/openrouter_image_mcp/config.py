@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -18,11 +19,13 @@ COHORT_WORKSPACES = {
 }
 # Compatibility default for internal client helpers; runtime selection is explicit.
 KEYRING_USER = COHORT_WORKSPACES["2027"]
+ADVISOR_MAX_TIMEOUT_S = 1800.0
 
 _ENV_WORKSPACE_ID = "OPENROUTER_IMAGE_WORKSPACE_ID"
 _ENV_OUTPUT_DIR = "OPENROUTER_IMAGE_OUTPUT_DIR"
 _ENV_MAX_INPUT_EDGE = "OPENROUTER_IMAGE_MAX_INPUT_EDGE"
 _ENV_TIMEOUT_S = "OPENROUTER_IMAGE_TIMEOUT_S"
+_ENV_ADVISOR_TIMEOUT_S = "OPENROUTER_ADVISOR_TIMEOUT_S"
 _ENV_RATIO_TOLERANCE = "OPENROUTER_IMAGE_RATIO_TOLERANCE"
 
 
@@ -33,8 +36,14 @@ class Settings:
     max_input_edge: int
     timeout_s: float
     ratio_tolerance: float
+    advisor_timeout_s: float = ADVISOR_MAX_TIMEOUT_S
 
     def __post_init__(self) -> None:
+        if not math.isfinite(self.advisor_timeout_s) or not 0 < self.advisor_timeout_s <= ADVISOR_MAX_TIMEOUT_S:
+            raise ValueError(
+                f"{_ENV_ADVISOR_TIMEOUT_S} must be finite and greater than 0, "
+                f"at most {ADVISOR_MAX_TIMEOUT_S:g} seconds."
+            )
         if self.workspace_id not in COHORT_WORKSPACES.values():
             raise ValueError(
                 "Settings workspace must belong to a configured Northwestern cohort."
@@ -101,5 +110,6 @@ def load_settings(env: Mapping[str, str] = os.environ) -> Settings:
         ),
         max_input_edge=_parse(env, _ENV_MAX_INPUT_EDGE, int, 2048),
         timeout_s=_parse(env, _ENV_TIMEOUT_S, float, 600.0),
+        advisor_timeout_s=_parse(env, _ENV_ADVISOR_TIMEOUT_S, float, ADVISOR_MAX_TIMEOUT_S),
         ratio_tolerance=_parse(env, _ENV_RATIO_TOLERANCE, float, 0.03),
     )

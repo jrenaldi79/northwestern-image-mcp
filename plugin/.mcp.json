@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "northwestern-images": {
+    "openrouter-sidecar": {
       "command": "uv",
       "args": [
         "run",

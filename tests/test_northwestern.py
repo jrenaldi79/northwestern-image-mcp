@@ -112,8 +112,8 @@ def test_desktop_config_runs_one_local_server_for_selected_cohort(cohort):
     project = Path(r"C:\work\northwestern")
     executable = Path(r"C:\work\northwestern\.venv\Scripts\python.exe")
     config = json.loads(cli.render_local_config(project, executable, cohort=cohort))
-    assert set(config["mcpServers"]) == {"northwestern-images"}
-    entry = config["mcpServers"]["northwestern-images"]
+    assert set(config["mcpServers"]) == {"openrouter-sidecar"}
+    entry = config["mcpServers"]["openrouter-sidecar"]
     assert entry["command"] == str(executable)
     assert entry["args"] == ["-m", "openrouter_image_mcp.cli"]
     assert entry["env"]["OPENROUTER_IMAGE_COHORT"] == cohort
@@ -145,7 +145,7 @@ async def test_two_mcp_profiles_status_logout_and_revocation(memory_keyring):
         Client(build_server(settings, http), raise_exceptions=False) as session,
     ):
         tools = await session.list_tools()
-        assert len(tools.tools) == 8
+        assert len(tools.tools) == 22
         status = await session.call_tool("account_status", {})
         text = "\n".join(item.text for item in status.content if hasattr(item, "text"))
         assert "Northwestern University / Class of 2028" in text

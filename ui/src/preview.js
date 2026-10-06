@@ -1,6 +1,6 @@
 import { App } from '@modelcontextprotocol/ext-apps';
 
-const app = new App({ name: 'Northwestern image preview', version: '1.0.0' }, {}, { autoResize: true });
+const app = new App({ name: 'OpenRouter Sidecar image preview', version: '1.0.0' }, {}, { autoResize: true });
 const status = document.getElementById('status');
 const details = document.getElementById('details');
 const gallery = document.getElementById('gallery');

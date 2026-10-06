@@ -24,6 +24,14 @@ from PIL import Image
 
 from openrouter_image_mcp import keystore
 from openrouter_image_mcp import server as server_mod
+from openrouter_image_mcp.advisor_tools import ADVISOR_ARGUMENTS
+from openrouter_image_mcp.apps import (
+    ADVISOR_UI_TOOLS,
+    ADVISOR_UI_URI,
+    APP_ONLY_TOOLS,
+    SETTINGS_UI_TOOLS,
+    SETTINGS_UI_URI,
+)
 from openrouter_image_mcp.catalog import Catalog, price_key
 from openrouter_image_mcp.client import OpenRouterClient
 from openrouter_image_mcp.config import Settings
@@ -42,7 +50,7 @@ TOOLS = {
     "generate_image",
     "edit_image",
     "remask_image",
-}
+} | ADVISOR_ARGUMENTS.keys()
 TABLE_HEADER = (
     "| id | name | inputs | aspect ratios | resolutions | quality | max n | seed | moderated | price |"
 )
@@ -59,6 +67,32 @@ KEY_INFO = {
 
 def fixture(name):
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+async def test_server_wires_separate_advisor_timeout(tmp_path, monkeypatch):
+    from openrouter_image_mcp.config import load_settings
+
+    settings = load_settings({"OPENROUTER_IMAGE_COHORT": "2027",
+                              "OPENROUTER_IMAGE_TIMEOUT_S": "12",
+                              "OPENROUTER_ADVISOR_TIMEOUT_S": "1200"})
+    clients = []
+    real_client = server_mod.AdvisorClient
+
+    def capture_client(workspace, timeout_s):
+        client = real_client(workspace, timeout_s)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(server_mod, "AdvisorClient", capture_client)
+    image_client = OpenRouterClient(timeout_s=settings.timeout_s, workspace_id=settings.workspace_id)
+    try:
+        build_server(settings=settings, client=image_client, advisor_store_path=tmp_path / "advisor.sqlite3")
+        assert clients[0]._timeout_s == 1200
+        assert image_client._timeout_s == 12
+    finally:
+        await image_client.aclose()
+        for client in clients:
+            await client.aclose()
 
 
 def png_b64(w, h):
@@ -183,26 +217,26 @@ def sample_render(tmp_path):
 
 async def test_build_server_returns_named_mcpserver(server):
     assert isinstance(server, MCPServer)
-    assert server.name == "openrouter-image"
+    assert server.name == "openrouter-sidecar"
     assert server.version == "0.2.0"
 
 
 async def test_tool_names(session):
     tools = (await session.list_tools()).tools
-    assert {t.name for t in tools} == TOOLS
-    assert len(tools) == 8
+    assert {t.name for t in tools} == TOOLS - APP_ONLY_TOOLS
+    assert len(tools) == 22
 
 
 @pytest.mark.parametrize("session", [True], indirect=True)
 async def test_image_apps_discovery(session):
-    uri = "ui://northwestern-images/preview.html"
+    uri = "ui://openrouter-sidecar/preview.html"
     tools = {t.name: t for t in (await session.list_tools()).tools}
     for name in ("generate_image", "edit_image", "remask_image"):
         assert tools[name].meta == {"ui": {"resourceUri": uri}}
-    for name in TOOLS - {"generate_image", "edit_image", "remask_image"}:
+    for name in TOOLS - {"generate_image", "edit_image", "remask_image"} - ADVISOR_UI_TOOLS - APP_ONLY_TOOLS - SETTINGS_UI_TOOLS:
         assert not tools[name].meta
     resources = (await session.list_resources()).resources
-    assert [str(r.uri) for r in resources] == [uri]
+    assert {str(r.uri) for r in resources} == {uri, ADVISOR_UI_URI, SETTINGS_UI_URI}
     page = (await session.read_resource(uri)).contents[0]
     assert page.mime_type == "text/html;profile=mcp-app"
     assert page.text.lower().startswith("<!doctype html>")
@@ -767,7 +801,7 @@ def test_run_uses_stdio_and_prints_nothing(monkeypatch, capsys):
     monkeypatch.delenv("OPENROUTER_IMAGE_WORKSPACE_ID", raising=False)
     server_mod.run()
 
-    assert calls == ["logging", ("openrouter-image", "stdio")]
+    assert calls == ["logging", ("openrouter-sidecar", "stdio")]
     assert capsys.readouterr().out == ""
 
 

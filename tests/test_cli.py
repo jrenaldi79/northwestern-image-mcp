@@ -32,7 +32,7 @@ def test_default_is_serve(monkeypatch):
 def test_print_config_runs_checkout(capsys):
     assert cli.main(["print-config", "--cohort", "2027"]) == 0
     config = json.loads(capsys.readouterr().out)
-    assert set(config["mcpServers"]) == {"northwestern-images"}
+    assert set(config["mcpServers"]) == {"openrouter-sidecar"}
     for entry in config["mcpServers"].values():
         assert entry["command"] == sys.executable
         assert entry["args"] == ["-m", "openrouter_image_mcp.cli"]

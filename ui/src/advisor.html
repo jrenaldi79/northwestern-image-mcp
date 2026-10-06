@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>OpenRouter Sidecar advisor result</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #fff; --fg: #202124; --muted: #666; --line: #ddd; --card: #f7f7f8; --purple: #4e2a84; --focus: #836eaa; --error: #a12626; }
+    @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #202124; --fg: #eee; --muted: #bbb; --line: #4a4a50; --card: #292a2d; --purple: #6b46a1; --error: #ffb4ab; } }
+    :root[data-theme="dark"] { color-scheme: dark; --bg: #202124; --fg: #eee; --muted: #bbb; --line: #4a4a50; --card: #292a2d; --purple: #6b46a1; --error: #ffb4ab; }
+    :root[data-theme="light"] { color-scheme: light; }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; padding: 16px; font: 14px/1.5 system-ui, sans-serif; background: var(--color-background-primary, var(--bg)); color: var(--color-text-primary, var(--fg)); }
+    main { max-width: 960px; margin: 0 auto; }
+    h1 { margin: 0; font-size: 18px; }
+    h2 { margin: 0 0 8px; font-size: 15px; }
+    p { margin: 6px 0; overflow-wrap: anywhere; }
+    .app-heading { display: flex; align-items: center; gap: 8px; }
+    .app-logo { width: 26px; height: 26px; border-radius: 4px; }
+    .muted, #result-title, #job-status, #cleanup { color: var(--color-text-secondary, var(--muted)); }
+    .metadata { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 10px 0; font-size: 12px; }
+    .metadata p { margin: 0; }
+    #model { font-weight: 600; }
+    details { border: 1px solid var(--color-border-primary, var(--line)); border-radius: 8px; padding: 10px 12px; margin: 12px 0; }
+    summary { cursor: pointer; font-weight: 600; }
+    pre { font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; margin: 8px 0 0; }
+    .answer-card, .preview-card { margin-top: 14px; padding: 14px; border: 1px solid var(--color-border-primary, var(--line)); border-radius: 10px; background: var(--color-background-secondary, var(--card)); }
+    #answer { user-select:text; min-height:48px; max-height:360px; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; scrollbar-color:var(--focus) transparent; padding-right:6px; }
+    #answer-state { font-size: 12px; color: var(--color-text-secondary, var(--muted)); }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+    button { font: inherit; font-weight: 600; border: 1px solid var(--color-border-primary, var(--line)); border-radius: 7px; background: var(--color-background-primary, var(--bg)); color: var(--color-text-primary, var(--fg)); padding: 8px 12px; cursor: pointer; }
+    button.primary { background: var(--purple); border-color: var(--purple); color: #fff; }
+    button:disabled { opacity: .5; cursor: default; }
+    :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+    label { display: block; font-weight: 600; margin: 10px 0 6px; }
+    textarea { display: block; width: 100%; min-height: 160px; resize: vertical; padding: 10px; border: 1px solid var(--color-border-primary, var(--line)); border-radius: 7px; background: var(--color-background-primary, var(--bg)); color: var(--color-text-primary, var(--fg)); font: inherit; }
+    .help { font-size: 12px; color: var(--color-text-secondary, var(--muted)); }
+    #error, #summary-error { color: var(--error); }
+    #error:empty, #summary-error:empty, #cleanup:empty { display: none; }
+    #export-status, #handoff-status { font-size: 13px; }
+    #summary-text:empty { display: none; }
+    @media (max-width: 420px) { body { padding: 12px; } .actions button { flex: 1 1 100%; } .answer-card, .preview-card { padding: 12px; } }
+
+    .return-heading { display:flex; gap:8px; align-items:center; margin:18px 0 0; color:#116b61; }
+    .return-icon { width:20px; height:20px; flex-shrink:0; }
+    #send { display:flex; gap:7px; align-items:center; }
+    .rich-text { overflow-wrap:anywhere; }
+    .rich-text > :first-child { margin-top:0; } .rich-text > :last-child { margin-bottom:0; }
+    .rich-text p,.rich-text ul,.rich-text ol,.rich-text blockquote { margin:10px 0; }
+    .rich-text h1 { font-size:21px; margin:16px 0 10px; line-height:1.3; }
+    .rich-text h2 { font-size:18px; margin:16px 0 8px; } .rich-text h3 { font-size:15px; margin:14px 0 6px; }
+    .rich-text li { margin:5px 0; } .rich-text ol,.rich-text ul { padding-left:24px; }
+    .rich-text code { font:12px/1.55 ui-monospace,Consolas,monospace; background:var(--bg); border-radius:4px; padding:2px 4px; }
+    .rich-text pre { background:var(--bg); border:1px solid var(--line); padding:12px; border-radius:8px; }
+    .rich-text pre code { padding:0; }
+    .rich-text blockquote { padding-left:12px; margin-left:0; border-left:3px solid #116b61; color:var(--muted); }
+    .rich-text table { display:block; max-width:100%; overflow:auto; border-collapse:collapse; font-size:12px; }
+    .rich-text th,.rich-text td { border:1px solid var(--line); padding:7px 10px; text-align:left; }
+    .rich-text a { color:var(--focus); text-decoration:underline; }
+    :root[data-theme="dark"] .return-heading { color:#9ad9c7; }
+    @media(prefers-color-scheme:dark) { :root:not([data-theme="light"]) .return-heading { color:#9ad9c7; } }
+  .model-identity { display:flex; align-items:center; gap:7px; } .provider-logo { width:24px; height:24px; object-fit:contain; padding:2px; background:#fff; border-radius:5px; }
+
+.visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+#prepare-full { background:#116b61; border-color:#116b61; color:#fff; }
+#export,#settings { border-color:transparent; background:transparent; font-weight:500; }
+@media(max-width:420px) { [aria-label="Result actions"] { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; } [aria-label="Result actions"] button { min-width:0; min-height:42px; padding:7px 5px; font-size:12px; line-height:1.3; } }
+
+.follow-up { margin:14px 0; }
+.follow-up label { font-size:13px; }
+#follow-up { min-height:72px; max-height:160px; resize:vertical; }
+.follow-up-footer { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:8px; }
+.follow-up-footer .help { margin:0; max-width:40ch; }
+#follow-up-send { background:#116b61; border-color:#116b61; color:#fff; white-space:nowrap; }
+#follow-up-status { font-size:12px; } #follow-up-status:empty { display:none; }
+@media(max-width:420px) { #answer { max-height:280px; } .follow-up-footer { align-items:flex-start; } #follow-up-send { font-size:12px; padding:8px; } }
+</style>
+</head>
+<body>
+  <main aria-labelledby="title">
+    <div class="app-heading"><!-- APP_LOGO --><h1 id="title">Advisor result</h1></div>
+    <p id="result-title"></p>
+    <p id="job-status" role="status" aria-live="polite">Waiting for an advisor result…</p>
+    <div class="metadata" aria-label="Result information">
+      <p class="model-identity"><span id="model-logo" aria-hidden="true"></span><span id="model"></span></p><p id="cost"></p><p id="cleanup"></p>
+    </div>
+    <p id="error" role="alert"></p>
+    <details id="prompt-details" hidden>
+      <summary>Original user prompt</summary>
+      <p id="result-id" class="help"></p><pre id="prompt"></pre>
+    </details>
+    <section class="answer-card" aria-labelledby="answer-title">
+      <h2 id="answer-title" class="visually-hidden">Advisor answer</h2>
+      <p id="answer-state">The answer stays here until you choose what to send.</p>
+      <div class="rich-text" id="answer" tabindex="0" aria-label="Advisor answer text"></div>
+    </section>
+    <section class="follow-up" aria-label="Continue advisor conversation">
+      <label for="follow-up">Message advisor</label>
+      <textarea id="follow-up" placeholder="Ask a follow-up…" aria-describedby="follow-up-help" maxlength="50000" disabled></textarea>
+      <div class="follow-up-footer"><p class="help" id="follow-up-help">Same chat and model. Uses OpenRouter credits.</p><button id="follow-up-send" disabled>Send follow-up</button></div>
+      <p id="follow-up-status" role="status" aria-live="polite"></p>
+    </section>
+    <h2 class="return-heading"><svg class="return-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M10 5 4 11l6 6M4 11h10a6 6 0 0 1 6 6v2"/></svg>Bring back to main chat</h2><div class="actions" aria-label="Result actions">
+      <button id="prepare-selection" disabled>Review selected text</button>
+      <button id="prepare-full" disabled>Review full answer</button>
+      <button id="summarize" disabled aria-describedby="summary-cost-note">Review a summary</button>
+      <button id="export" disabled>Save as file</button>
+      <button id="settings" disabled aria-describedby="settings-status">Settings</button>
+    </div>
+    <p class="help" id="summary-cost-note">Summaries use OpenRouter credits.</p>
+    <p class="help">Nothing is shared until you send.</p>
+    <p id="export-status" role="status" aria-live="polite"></p>
+    <p id="settings-status" role="status" aria-live="polite"></p>
+    <div id="settings-request-section" hidden><label for="settings-request">Settings request for parent chat</label><textarea id="settings-request" readonly></textarea></div>
+    <section class="preview-card" id="preview-section" aria-labelledby="preview-title" hidden>
+      <h2 id="preview-title">Review before sending</h2>
+      <p id="preview-context" class="help"></p>
+      <p id="summary-status" role="status" aria-live="polite"></p>
+      <p id="summary-error" role="alert"></p>
+      <div class="rich-text" id="summary-text" aria-label="Summary in progress"></div>
+      <label for="preview">Message preview</label>
+      <textarea id="preview" aria-describedby="preview-help" spellcheck="false"></textarea>
+      <p class="help" id="preview-help">Edit before sending. Source information is included.</p>
+      <div class="actions">
+        <button class="primary" id="send" disabled><svg class="return-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M10 5 4 11l6 6M4 11h10a6 6 0 0 1 6 6v2"/></svg>Send to main chat</button>
+        <button id="copy" hidden>Copy message</button>
+      </div>
+      <p id="handoff-status" role="status" aria-live="polite"></p>
+      <div id="copy-section" hidden>
+        <label for="copy-text">Copyable message</label>
+        <textarea id="copy-text" readonly spellcheck="false"></textarea>
+      </div>
+    </section>
+  </main>
+  <!-- BUNDLED_SCRIPT -->
+</body>
+</html>

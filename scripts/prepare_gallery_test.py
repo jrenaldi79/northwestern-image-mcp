@@ -45,7 +45,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=Path(__file__).resolve().parents[1] / ".venv" / "gallery-tests")
     arguments = prepare_fixture(parser.parse_args().output_dir)
-    print("In a new Claude Desktop chat, use northwestern-images:")
+    print("In a new Claude Desktop chat, use openrouter-sidecar:")
     print("Call remask_image with exactly these arguments. It is free and offline.")
     print(json.dumps(arguments, indent=2))
     print("Check that the result shows an inline image gallery with a $0.00 cost.")

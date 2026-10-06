@@ -13,6 +13,7 @@ def test_install_preserves_settings_other_servers_and_original_bytes(tmp_path):
         "preferences": {"example": True},
         "mcpServers": {
             "other": {"command": "another-server", "args": ["serve"]},
+            "northwestern-images": {"command": "old-local-single"},
             "northwestern-images-2027": {"command": "old-local"},
             "northwestern-images-2028": {"command": "old-local"},
         },
@@ -26,11 +27,11 @@ def test_install_preserves_settings_other_servers_and_original_bytes(tmp_path):
     assert after["mcpServers"]["other"] == original["mcpServers"]["other"]
     assert set(after["mcpServers"]) == {
         "other",
-        "northwestern-images",
+        "openrouter-sidecar",
     }
 
     assert (
-        after["mcpServers"]["northwestern-images"]["env"]["OPENROUTER_IMAGE_COHORT"]
+        after["mcpServers"]["openrouter-sidecar"]["env"]["OPENROUTER_IMAGE_COHORT"]
         == "2028"
     )
 

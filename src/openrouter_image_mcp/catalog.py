@@ -42,6 +42,8 @@ class ModelCapabilities:
     size: bool
     is_moderated: bool | None
     pricing: dict[str, str] = field(default_factory=dict)
+    min_input_images: int = 0
+    pricing_lines: list[dict] = field(default_factory=list)
 
 
 def _dict(value: Any) -> dict:
@@ -58,6 +60,13 @@ def _enum_values(params: dict, key: str) -> list[str] | None:
 def _range_max(params: dict, key: str, default: int) -> int:
     value = _dict(params.get(key)).get("max")
     return value if isinstance(value, int) and not isinstance(value, bool) else default
+
+
+def usable_demo_image(model: ModelCapabilities) -> bool:
+    """A fixed text-only tutorial needs a raster preview and no required references."""
+    return (model.route == "images" and model.min_input_images == 0
+            and (model.output_formats is None or any(
+                value.casefold() in {"png", "jpeg", "jpg", "webp"} for value in model.output_formats)))
 
 
 def _accepts_images(record: dict) -> bool:
@@ -99,11 +108,14 @@ def _build(model_id: str, image: dict | None, meta: dict) -> ModelCapabilities:
             size=False,
         )
     params = _dict(image.get("supported_parameters"))
+    minimum = _dict(params.get("input_references")).get("min", 0)
     return ModelCapabilities(
         **common,
         route="images",
         accepts_images=_accepts_images(image),
         max_input_images=_range_max(params, "input_references", 0),
+        min_input_images=minimum if type(minimum) is int and minimum >= 0 else -1,
+        pricing_lines=image.get("pricing") if isinstance(image.get("pricing"), list) else [],
         aspect_ratios=_enum_values(params, "aspect_ratio"),
         resolutions=_enum_values(params, "resolution"),
         qualities=_enum_values(params, "quality"),

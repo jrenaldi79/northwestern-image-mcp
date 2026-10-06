@@ -193,6 +193,14 @@ class AdvisorJobs:
         # A task cancelled before its coroutine first runs cannot execute its
         # exception/finally handlers. Persist those queued interruptions here.
         for scope, row in records:
-            self.results.interrupt(scope, row["id"], self.process_id,
-                                   cleanup_pending=self._cleanup_pending(scope, row["chat_id"]),
-                                   error="Advisor server shut down; no automatic retry was made.")
+            try:
+                current = self.results.get(scope, row["id"])
+                if current["status"] not in {"queued", "running"}:
+                    continue
+                self.results.interrupt(scope, row["id"], self.process_id,
+                                       cleanup_pending=self._cleanup_pending(scope, row["chat_id"]),
+                                       error="Advisor server shut down; no automatic retry was made.")
+            except AdvisorAccessError:
+                # A completed job/chat can be deleted before its task's done
+                # callback removes the captured record. Never recreate it.
+                continue

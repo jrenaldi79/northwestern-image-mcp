@@ -301,6 +301,21 @@ async def test_reopen_metadata_and_delete_remove_jobs_preserve_export(rig):
     assert path.exists()
 
 
+async def test_shutdown_tolerates_deleted_completed_job_record(rig):
+    jobs, _, chat_id, state = rig
+    state["release"].set()
+    job = await jobs.start(chat_id, "Prompt")
+    await terminal(jobs, job["job_id"])
+    scope, row = jobs._owned(job["job_id"])
+    await asyncio.gather(*list(jobs._tasks.values()))
+    jobs.delete_chat(chat_id)
+    # Shutdown can capture this record before a completed task's callback runs.
+    jobs._records[job["job_id"]] = (scope, row)
+    await jobs.close()
+    with pytest.raises(AdvisorAccessError):
+        jobs.view(job["job_id"])
+
+
 async def test_partial_credentials_redacted_and_stream_commentary_ignored(rig):
     jobs, service, chat_id, state = rig
     state["partial"] = "Do not leak " + KEY_A + " or " + KEY_B

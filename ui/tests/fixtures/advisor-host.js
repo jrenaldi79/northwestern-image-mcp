@@ -7,7 +7,7 @@ const html = await readFile(new URL('../../../src/openrouter_image_mcp/ui/adviso
 export const job = (overrides = {}) => ({
   job_id: 'result-1', chat_id: 'chat-1', model: 'example/advisor', title: 'Study advice',
   status: 'completed', cost_usd: 0.012, cleanup_pending: false, error: null,
-  kind: 'answer', source_job_id: null, ...overrides,
+  kind: 'message', source_job_id: null, ...overrides,
 });
 export const result = (overrides = {}) => {
   const data = { ...job(), prompt: 'Explain this topic.', answer: 'First paragraph.\n\nSelected insight.\n\nLast paragraph.', created_at: '2026-10-06T12:00:00Z', ...overrides };

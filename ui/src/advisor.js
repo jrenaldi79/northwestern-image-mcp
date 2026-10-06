@@ -48,7 +48,7 @@ function setTheme(context) {
 
 function updateButtons() {
   const following = followUpBusy || summaryBusy || exportBusy || sendBusy;
-  const canFollowUp = !disposed && !blocked && canCallTools() && original?.kind === 'answer'
+  const canFollowUp = !disposed && !blocked && canCallTools() && original?.kind === 'message'
     && original.status === 'completed' && !!string(original.chat_id) && !following;
   element('follow-up').disabled = disposed || (!original && !blocked) || !canCallTools();
   element('follow-up').readOnly = !canFollowUp;
@@ -312,7 +312,7 @@ element('follow-up-send').addEventListener('click', async () => {
     }
     const data = result.structuredContent;
     if (!validateStatus(data) || data.job_id === source.job_id || data.chat_id !== source.chat_id
-      || data.kind !== 'answer' || data.model !== source.model) {
+      || data.kind !== 'message' || data.model !== source.model) {
       suppressResult('The host returned an invalid follow-up job. Reopen the chat.');
       element('follow-up-status').textContent = 'Follow-up not confirmed. Draft kept.';
       return;

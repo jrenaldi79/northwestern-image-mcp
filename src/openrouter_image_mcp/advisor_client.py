@@ -68,7 +68,7 @@ class AdvisorClient:
         if not isinstance(models, list):
             raise ProviderError("Advisor model catalog is unavailable.")
         return [item for item in models if isinstance(item, dict)
-                and "text" in (item.get("architecture") or {}).get("output_modalities", [])
+                and (item.get("architecture") or {}).get("output_modalities") == ["text"]
                 and "tools" in (item.get("supported_parameters") or [])]
 
     async def upload_skills(self, key: str, filename: str, content: bytes) -> str:

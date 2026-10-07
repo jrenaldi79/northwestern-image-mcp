@@ -3,6 +3,7 @@
 import importlib
 import importlib.util
 import json
+import time
 from contextlib import contextmanager
 
 import httpx
@@ -16,6 +17,40 @@ WORKSPACE = "test-workspace"
 KEY_A = "sk-or-v1-synthetic-account-a"
 KEY_B = "sk-or-v1-synthetic-account-b"
 MODEL = "test/advisor"
+
+
+async def test_advisor_defaults_exclude_image_outputs_but_keep_vision_chat(tmp_path, memory_keyring):
+    from openrouter_image_mcp.advisor import AdvisorService
+    from openrouter_image_mcp.advisor_client import AdvisorClient
+    from openrouter_image_mcp.preferences import PreferenceService
+
+    keystore.set_key(KEY_A, workspace_id=WORKSPACE)
+    rows = [
+        {"id": "google/chat", "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]}},
+        {"id": "google/vision-chat", "architecture": {"input_modalities": ["text", "image"], "output_modalities": ["text"]}},
+        {"id": "google/image-only", "architecture": {"output_modalities": ["image"]}},
+        {"id": "google/image-and-text", "architecture": {"output_modalities": ["text", "image"]}},
+        {"id": "google/audio-and-text", "architecture": {"output_modalities": ["text", "audio"]}},
+    ]
+    rows = [row | {"created": int(time.time()) - 86400, "supported_parameters": ["tools"]} for row in rows]
+
+    def handle(request):
+        assert request.url.path.endswith("/models"), "Filtering must not invoke inference"
+        return httpx.Response(200, json={"data": rows})
+
+    client = AdvisorClient(WORKSPACE, 30, transport=httpx.MockTransport(handle))
+    try:
+        service = AdvisorService(WORKSPACE, AdvisorStore(tmp_path / "advisor.sqlite3"), client)
+        preferences = PreferenceService(service)
+        expected = {"google/chat", "google/vision-chat"}
+        assert {row["id"] for row in await service.models()} == expected
+        assert {row["id"] for row in (await preferences.view())["models"]} == expected
+        initial = preferences.get()
+        for model in ("google/image-only", "google/image-and-text"):
+            with pytest.raises(OpenRouterError, match="available exact advisor"):
+                await preferences.update(initial["settings_id"], initial["revision"], general_default=model)
+    finally:
+        await client.aclose()
 
 
 def answer(container_id=None, text="Advice"):
